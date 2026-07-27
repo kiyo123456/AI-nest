@@ -61,13 +61,27 @@
 
 ## 6. フロント（React SPA）
 
-- [ ] prototype を `frontend/` に昇格、`npm install`（Vite+React+TS）
-- [ ] 認証画面（サインアップ/ログイン）＋API連携、認証状態管理
-- [ ] API クライアント（fetch/axios、Sanctum対応）
-- [ ] メイン画面(案6)：左テーマ / 中央チャット / 右マインドマップ、開閉・全画面
-- [ ] マインドマップを @xyflow/react で pan/zoom 対応に置換
-- [ ] チャット送信→API→回答表示、ノード/テーマ切替、パンくず
+> 大きすぎるため**4スライスに分割**（レビューできる粒度で積む原則）。
+
+**6-1 土台＋認証** ✅ 完了 2026-07-26
+- [x] prototype を `frontend/` に昇格（**コピー**。git 未導入のため移動は避けた）、`npm install`（Vite+React18+TS）✅
+- [x] API クライアント（fetch、Sanctum SPA cookie 対応。`credentials:'include'`＋CSRF）✅ `src/api/client.ts`
+- [x] 認証画面（サインアップ/ログイン）＋API連携、認証状態管理（`loading/authenticated/guest`）✅
+- [x] React Router 導入＋ルートガード（未認証は `/login` へ）✅
+- [x] **ブラウザ実機で検証**（リロードでセッション復元＝Step3のcookie認証が動く証明）✅
+
+**6-2 メイン画面を実データに接続**（次）
+- [ ] メイン画面(案6)：左テーマ / 中央チャット / 右マインドマップ、開閉・全画面 ※UIは昇格済み、**実APIへの接続が未**
+- [ ] projects/nodes/messages 取得、ノード/テーマ切替、パンくず（`GET /nodes/{id}/path`）
+- [ ] 案1〜5（`layouts.tsx` の Layout1〜5・`trees/` の未採用3種）を整理
+
+**6-3 チャットと枝作成**
+- [ ] チャット送信→`POST /nodes/{node}/chat`→AI回答表示
 - [ ] 「ここから枝を作る」→ nodes API で子ノード生成→ツリー更新
+- [ ] ⚠️ `branchFromIndex`（位置）→ **`branch_from_message_id`（メッセージID）** へ修正（Step1 の判断に合わせる）
+
+**6-4 マインドマップ強化**
+- [ ] マインドマップを @xyflow/react で pan/zoom 対応に置換
 
 ## 7. 仕上げ（非機能・任意）
 
@@ -132,3 +146,12 @@
 - **テスト 6件緑**（全57件）: 成功/**文脈が分岐点までであることの検証**/AI失敗で502＋発話は残存/422/403/401。**`AnthropicClient` をモックするので実APIを呼ばず課金ゼロ**。
 - **依存追加の責任**: `composer audit` は 9 advisories / 2 packages（`guzzlehttp/guzzle`・`guzzlehttp/psr7`）。**SDK導入前と同数＝新規SDKによる増加はなし**。guzzle 系は既存の課題として別途対応。
 - **次にやること:** Step6（フロント React SPA）。`prototype/` を `frontend/` に昇格 → 認証画面 → APIクライアント（Sanctum cookie対応）→ 3ペイン画面 → @xyflow/react。**未実施**: `.env` に実 `ANTHROPIC_API_KEY` を入れての疎通確認（本人）。
+
+### 2026-07-26 セーブポイント（Step6-1 フロント土台＋認証 完了）
+- **技術選定（本人）**: ①**直接CORSで叩く**（vs Vite dev proxy）＝Step3の設定を実機検証するため ②**React Router 導入** ③スライスは**6-1のみ**。根拠は `api/README.md` 設計判断ログ。
+- **実装**: `frontend/`（`prototype/` からコピー昇格・`prototype/` は温存）、`src/api/client.ts`（Sanctum作法を集約）、`src/api/types.ts`、`src/auth/AuthContext.tsx`＋`guards.tsx`、`src/pages/{Login,Register,Main}Page.tsx`、`App.tsx` をルーター構成に、`styles.css` に認証画面スタイル追記、`tsconfig.json` に `types: ["vite/client"]`。
+- **ブラウザ実機で全フロー検証済み**: `/`→`/login` リダイレクト／サインアップ201→`/`／**リロードで `/api/me` 200＝セッション復元**／ログアウト204→`/login`／誤パスワード422をフィールド表示／正パスワード200。**CORSプリフライト(OPTIONS)が204で通り**、コンソールエラーなし。`npm run build` 通過。
+- **嵌まりどころ（記録）**: ①`XSRF-TOKEN` cookie は URL エンコード済み→`decodeURIComponent` 必須 ②cookie はポートを区別しないので `SESSION_DOMAIN=localhost` で 5173↔8000 が繋がる ③認証状態に `loading` が無いとログイン画面が一瞬フラッシュする。
+- **依存の判断**: `react-router-dom` は **7.18.1 に固定**。7.11.0 へ下げると `<Link>`/`useNavigate` のオープンリダイレクト等**14件**の脆弱性を抱えるため不可。7.18.1 の1件は RSC モード専用で本アプリ（クライアント専用SPA）には該当しない。
+- **⚠️ 未対応の課題**: **リポジトリが git 管理されていない**（ルート・`api/`・`frontend/` 全て）。57件のテストを含む成果物がバックアップ無しの状態。
+- **次にやること:** 6-2（メイン画面を実データに接続）。

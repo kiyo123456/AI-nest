@@ -10,6 +10,20 @@
 
 ## 設計判断ログ
 
+### Step6 スライス1: フロント土台＋認証（frontend/ 昇格・APIクライアント・ログイン画面）
+
+**採用**: `prototype/` を `frontend/` に**コピー**して昇格、React Router 導入、**Vite proxy を使わず直接 CORS で API を叩く**。
+
+- **なぜ Vite dev proxy を使わないか**: proxy を挟むとブラウザからは同一オリジンに見え、**Step3 で設定した CORS・`SANCTUM_STATEFUL_DOMAINS`・`SESSION_DOMAIN` が一度も使われず検証されない**（本番で別オリジン配信にした瞬間に初めて壊れる）。5173→8000 を直接叩くことで、開発中に常にクロスオリジン cookie 認証の経路を通す。実際ブラウザ検証で CORS プリフライト（`OPTIONS` → 204）が発生し、`Access-Control-Allow-Credentials: true` が返り、cookie が乗ることを確認した。
+- **なぜポートが違うのに cookie が共有されるか**: **cookie はオリジンと違ってポートを区別しない**。`SESSION_DOMAIN=localhost` により 5173 と 8000 で同じ cookie が使われる。これが SPA cookie 認証がローカルで成立する理由。
+- **CSRF cookie の罠**: `XSRF-TOKEN` cookie の値は **URL エンコードされている**ため、`decodeURIComponent` してから `X-XSRF-TOKEN` ヘッダに載せないと CSRF 検証に落ちる。この処理は `src/api/client.ts` に閉じ込め、呼び出し側は意識しない。
+- **`credentials: 'include'` が必須**: これが無いとブラウザは別オリジンへ cookie を送らない。API 側の `supports_credentials => true` と対になる設定。
+- **認証状態に `loading` を持つ理由**: 起動時に `GET /api/me` でセッションを復元するが、その解決前に「未認証」と判定するとログイン画面が一瞬フラッシュしてしまう。`loading / authenticated / guest` の3状態にし、`loading` 中はルートガードで待つ。
+- **React Router を選んだ理由**: URL で画面を分けることで、リロード復帰・ブラウザの戻る・未認証時のリダイレクトが標準的な形で書ける。状態フラグでの出し分けは依存ゼロだが、これらが全て自前実装になる。
+- **昇格は移動でなくコピー**: このリポジトリは **git 管理されていない**ため、移動は失敗時に戻せない。`prototype/` を残し、案1〜6の比較履歴も保全した。
+
+**検証（ブラウザ実機）**: 未認証で `/`→`/login` リダイレクト / サインアップ 201→`/` 遷移 / **リロードで `/api/me` 200 → セッション復元** / ログアウト 204→`/login` / 誤パスワードで 422 をフィールド下に表示 / 正パスワードで 200。コンソールエラーなし、`npm run build`（`tsc -b`）通過。
+
 ### Step5: AI連携（Anthropic 公式PHP SDK / 同期）
 
 **採用**: 公式PHP SDK `anthropic-ai/sdk` を導入し、`App\Services\AnthropicClient` でラップ。`POST /api/nodes/{node}/chat` で同期的に呼ぶ。

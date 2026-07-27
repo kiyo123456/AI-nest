@@ -19,7 +19,7 @@ graph TD
 
 進行ルール: AIは答えを押し付けず、問いとトレードオフを提示して本人の判断を引き出す。各フェーズの結論をプランに追記して資産化する。
 
-進捗: Phase1〜6 完了 / Phase7（実装）進行中 — Step1〜3、Step4（CRUD＋認可）、橋渡し（祖先パス再帰CTE＋ContextBuilder）、**Step5（AI連携）完了＝バックエンドの主機能が一通り動く状態**。次は Step6（フロント React SPA）。
+進捗: Phase1〜6 完了 / Phase7（実装）進行中 — Step1〜5 完了（バックエンドの主機能が一通り動く）。**Step6 は4スライスに分割し、6-1（フロント土台＋認証）完了**＝ブラウザから実際にログインでき、リロードでセッションが復元される。次は 6-2（メイン画面を実データに接続）。
 
 ---
 
@@ -71,7 +71,7 @@ graph TD
   - DB: MySQL
   - AI呼び出し: サーバ側から Anthropic/OpenAI（キーは `.env`）
 - 構成根拠: 目的（自作API・認証の実践/証明）に直結。CORS・トークン認証・フロント/バック分離まで語れる。
-- リポジトリ（実態）: `api/`（Laravel）＋ `prototype/`（モックの React/Vite）。`prototype/` を `frontend/` へ昇格するのは未実施。
+- リポジトリ（実態）: `api/`（Laravel）＋ `frontend/`（React/Vite。Step6-1 で `prototype/` からコピー昇格）＋ `prototype/`（案1〜6の比較モック。履歴として保全）。
 
 ## Phase6 データモデリング・スキーマ（確定）
 

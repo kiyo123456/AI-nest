@@ -1,0 +1,16 @@
+# OS
+.DS_Store
+
+# Node（prototype/ 配下に .gitignore が無いためルートで面倒を見る）
+node_modules/
+dist/
+.vite/
+
+# ローカル環境固有のエージェント設定（launch.json は共有価値があるので残す）
+.claude/settings.local.json
+
+# ログ（api/.gitignore の *.log と重複するが明示）
+api/storage/logs/*.log
+
+# Cursor 時代の作業メモ（PLAN.md 上「以後更新しない履歴」扱い）
+.cursor/plans/

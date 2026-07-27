@@ -1,0 +1,541 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>思考の樹形図 — モック比較（自己完結版 / CDN）</title>
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <style>
+      :root {
+        --bg: #0f1117; --panel: #161922; --panel-2: #1c2030; --border: #272c3a;
+        --text: #e6e8ee; --text-dim: #9aa3b2; --accent: #6ea8fe; --accent-2: #8b5cf6;
+        --current: #ffb454; --user: #2a3550; --ai: #1e2230;
+      }
+      * { box-sizing: border-box; }
+      html, body, #root { height: 100%; margin: 0; }
+      body { background: var(--bg); color: var(--text);
+        font-family: -apple-system, BlinkMacSystemFont, "Hiragino Sans", "Noto Sans JP", sans-serif; font-size: 14px; }
+      .app { height: 100vh; display: flex; flex-direction: column; }
+      .topbar { display: flex; align-items: center; gap: 24px; padding: 10px 16px; background: var(--panel); border-bottom: 1px solid var(--border); }
+      .brand { font-weight: 700; white-space: nowrap; }
+      .switcher { display: flex; gap: 6px; flex-wrap: wrap; }
+      .tab { background: var(--panel-2); color: var(--text-dim); border: 1px solid var(--border); border-radius: 999px; padding: 6px 12px; cursor: pointer; font-size: 13px; }
+      .tab:hover { color: var(--text); }
+      .tab.active { background: linear-gradient(90deg, var(--accent), var(--accent-2)); color: #0b0d12; border-color: transparent; font-weight: 700; }
+      .note-bar { padding: 8px 16px; background: var(--panel-2); color: var(--text-dim); border-bottom: 1px solid var(--border); font-size: 13px; }
+      .stage { flex: 1; min-height: 0; }
+      .layout { height: 100%; display: grid; }
+      .three-pane { grid-template-columns: 220px 1fr 320px; }
+      .three-pane.right-heavy { grid-template-columns: 160px 1fr 420px; }
+      .two-pane { grid-template-columns: 220px 1fr; }
+      .theme-sidebar { background: var(--panel); border-right: 1px solid var(--border); padding: 12px; overflow: auto; }
+      .theme-sidebar.compact { font-size: 13px; }
+      .sidebar-head { font-size: 12px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-dim); margin-bottom: 10px; }
+      .theme-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+      .theme-list li { display: flex; align-items: center; gap: 8px; padding: 8px 10px; border-radius: 8px; cursor: pointer; color: var(--text-dim); }
+      .theme-list li:hover { background: var(--panel-2); color: var(--text); }
+      .theme-list li.active { background: var(--panel-2); color: var(--text); font-weight: 600; }
+      .theme-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--accent); }
+      .new-theme { margin-top: 12px; width: 100%; background: transparent; border: 1px dashed var(--border); color: var(--text-dim); border-radius: 8px; padding: 8px; cursor: pointer; }
+      .chat-panel { display: flex; flex-direction: column; min-height: 0; background: var(--bg); border-right: 1px solid var(--border); }
+      .breadcrumb { padding: 10px 16px; border-bottom: 1px solid var(--border); display: flex; align-items: center; flex-wrap: wrap; gap: 2px; background: var(--panel); }
+      .crumb { background: transparent; border: none; color: var(--text-dim); cursor: pointer; font-size: 13px; padding: 2px 4px; border-radius: 6px; }
+      .crumb:hover { color: var(--text); }
+      .crumb.current { color: var(--current); font-weight: 700; }
+      .sep { color: var(--text-dim); margin: 0 2px; }
+      .chat-title { padding: 12px 16px; font-weight: 700; font-size: 15px; border-bottom: 1px solid var(--border); }
+      .messages { flex: 1; overflow: auto; padding: 16px; display: flex; flex-direction: column; gap: 14px; }
+      .msg { display: flex; flex-direction: column; max-width: 80%; }
+      .msg.user { align-self: flex-end; align-items: flex-end; }
+      .msg.assistant { align-self: flex-start; }
+      .bubble { padding: 10px 14px; border-radius: 12px; line-height: 1.6; }
+      .msg.user .bubble { background: var(--user); }
+      .msg.assistant .bubble { background: var(--ai); border: 1px solid var(--border); }
+      .branch-btn { margin-top: 6px; background: transparent; border: 1px solid var(--accent-2); color: var(--accent); border-radius: 999px; padding: 3px 10px; font-size: 12px; cursor: pointer; }
+      .branch-btn:hover { background: rgba(139, 92, 246, 0.15); }
+      .composer { display: flex; gap: 8px; padding: 12px 16px; border-top: 1px solid var(--border); background: var(--panel); }
+      .composer input { flex: 1; background: var(--panel-2); border: 1px solid var(--border); color: var(--text); border-radius: 10px; padding: 10px 12px; outline: none; }
+      .composer button { background: var(--accent); color: #0b0d12; border: none; border-radius: 10px; padding: 0 18px; font-weight: 700; cursor: pointer; }
+      .right-pane { background: var(--panel); padding: 12px; overflow: auto; }
+      .right-pane.wide { background: var(--panel-2); }
+      .nested-tree { font-size: 13px; }
+      .branch { position: relative; }
+      .children { margin-left: 14px; padding-left: 12px; border-left: 1px dashed var(--border); }
+      .tree-node { display: flex; align-items: center; gap: 8px; width: 100%; text-align: left; background: var(--panel-2); border: 1px solid var(--border); color: var(--text-dim); border-radius: 8px; padding: 7px 10px; margin: 4px 0; cursor: pointer; }
+      .tree-node:hover { color: var(--text); }
+      .tree-node.on-path { color: var(--text); border-color: var(--accent); }
+      .tree-node.current { color: #0b0d12; background: var(--current); border-color: var(--current); font-weight: 700; }
+      .emphasize .tree-node.current { box-shadow: 0 0 0 3px rgba(255, 180, 84, 0.3); }
+      .tn-title { flex: 1; }
+      .here { font-size: 11px; background: #0b0d12; color: var(--current); padding: 1px 6px; border-radius: 999px; }
+      .tree-node.current .here { background: #0b0d12; color: var(--current); }
+      .radial-wrap { display: flex; justify-content: center; padding-top: 8px; }
+      .radial-svg .edge { stroke: var(--border); stroke-width: 1.5; }
+      .radial-svg .edge.on-path { stroke: var(--accent); stroke-width: 2.5; }
+      .radial-node { cursor: pointer; }
+      .rnode { fill: var(--panel-2); stroke: var(--border); stroke-width: 2; }
+      .rnode.on-path { stroke: var(--accent); }
+      .rnode.current { fill: var(--current); stroke: var(--current); }
+      .rlabel { fill: var(--text-dim); font-size: 11px; }
+      .indent-tree { font-size: 13px; }
+      .indent-row { display: flex; align-items: center; gap: 6px; padding: 5px 6px; border-radius: 6px; cursor: pointer; color: var(--text-dim); }
+      .indent-row:hover { background: var(--panel-2); color: var(--text); }
+      .indent-row.on-path { color: var(--text); }
+      .indent-row.current { background: rgba(255, 180, 84, 0.16); color: var(--current); font-weight: 700; }
+      .caret { width: 14px; display: inline-block; text-align: center; color: var(--text-dim); }
+      .caret.empty { opacity: 0.4; }
+      .indent-label { flex: 1; }
+      .center-wrap { position: relative; min-height: 0; display: flex; }
+      .center-wrap .chat-panel { flex: 1; }
+      .minimap { position: absolute; right: 16px; bottom: 16px; width: 240px; max-height: 320px; background: var(--panel); border: 1px solid var(--border); border-radius: 12px; box-shadow: 0 12px 40px rgba(0,0,0,0.5); overflow: hidden; display: flex; flex-direction: column; }
+      .minimap-head { display: flex; justify-content: space-between; align-items: center; padding: 8px 10px; border-bottom: 1px solid var(--border); font-size: 12px; color: var(--text-dim); }
+      .minimap-head button { background: transparent; border: 1px solid var(--border); color: var(--text-dim); border-radius: 6px; padding: 2px 8px; cursor: pointer; }
+      .minimap-body { padding: 8px 10px; overflow: auto; font-size: 12px; }
+      .fullscreen-tree { position: fixed; inset: 0; background: rgba(0,0,0,0.6); display: flex; align-items: center; justify-content: center; z-index: 50; }
+      .ft-inner { background: var(--panel); border: 1px solid var(--border); border-radius: 16px; padding: 16px; width: 520px; max-width: 90vw; }
+      .ft-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
+      .ft-head button { background: transparent; border: 1px solid var(--border); color: var(--text-dim); border-radius: 8px; padding: 4px 10px; cursor: pointer; }
+      /* ---- layout6: mind map ---- */
+      .layout6 .center6 { display: flex; flex-direction: column; min-height: 0; border-right: 1px solid var(--border); }
+      .layout6 .center6 .chat-panel { flex: 1; min-height: 0; border-right: none; }
+      .toolbar6 { display: flex; gap: 8px; align-items: center; padding: 8px 12px; border-bottom: 1px solid var(--border); background: var(--panel); }
+      .toolbar6 .spacer { flex: 1; }
+      .toolbar6 button { background: var(--panel-2); border: 1px solid var(--border); color: var(--text-dim); border-radius: 8px; padding: 5px 10px; cursor: pointer; font-size: 12px; }
+      .toolbar6 button:hover { color: var(--text); }
+      .layout6 .collapsible.right { min-height: 0; overflow: hidden; }
+      .layout6 .collapsible.right .right-pane { height: 100%; display: flex; flex-direction: column; }
+      .mm-wrap { height: 100%; overflow: auto; background: var(--bg); border-radius: 10px; }
+      .mm-svg { display: block; }
+      .mm-edge { stroke: var(--border); stroke-width: 2; }
+      .mm-edge.on-path { stroke: var(--accent); stroke-width: 3; }
+      .mm-pill { display: flex; align-items: center; gap: 6px; height: 100%; box-sizing: border-box; padding: 0 10px; border-radius: 999px; background: var(--panel-2); border: 1px solid var(--border); color: var(--text-dim); font-size: 12px; cursor: pointer; overflow: hidden; white-space: nowrap; }
+      .mm-pill .mm-label { overflow: hidden; text-overflow: ellipsis; }
+      .mm-pill:hover { color: var(--text); }
+      .mm-pill.on-path { color: var(--text); border-color: var(--accent); }
+      .mm-pill.current { background: var(--current); border-color: var(--current); color: #0b0d12; font-weight: 700; }
+      .mm-pill.root { background: linear-gradient(90deg, var(--accent), var(--accent-2)); color: #0b0d12; border-color: transparent; font-weight: 700; }
+      .mm-here { font-size: 10px; background: #0b0d12; color: var(--current); padding: 0 5px; border-radius: 999px; }
+      .ft-inner.big { width: 92vw; height: 86vh; display: flex; flex-direction: column; }
+      .ft-canvas { flex: 1; min-height: 0; overflow: auto; border: 1px solid var(--border); border-radius: 12px; }
+    </style>
+  </head>
+  <body>
+    <div id="root"></div>
+
+    <script type="text/babel" data-presets="react">
+      const { useState, useMemo, useContext, createContext } = React;
+
+      // ---------- dummy data ----------
+      let seq = 100;
+      const nextId = (p) => p + "_" + ++seq;
+
+      const trees = [
+        { id: "t_laravel", title: "Laravel を学ぶ" },
+        { id: "t_react", title: "React の状態管理" },
+        { id: "t_infra", title: "インフラ入門" },
+      ];
+
+      const initialNodes = [
+        { id: "n_root", treeId: "t_laravel", parentId: null, branchFromIndex: null,
+          title: "Laravel の DB が知りたい",
+          messages: [
+            { id: "m1", role: "user", content: "Laravel でデータベースを扱うには何から学べばいい？" },
+            { id: "m2", role: "assistant", content: "まず Eloquent ORM を理解するのが近道です。モデル・マイグレーション・リレーションの3つが基本になります。" },
+            { id: "m3", role: "user", content: "なるほど。次は Eloquent を詳しく知りたい。" },
+          ] },
+        { id: "n_eloquent", treeId: "t_laravel", parentId: "n_root", branchFromIndex: 2,
+          title: "Eloquent ORM とは",
+          messages: [
+            { id: "m4", role: "user", content: "Eloquent ORM って具体的に何をしてくれるの？" },
+            { id: "m5", role: "assistant", content: "テーブルを PHP のオブジェクトとして扱える仕組みです。SQL を書かずに User::find(1) のように操作できます。内部ではクエリビルダが SQL を生成しています。" },
+            { id: "m6", role: "user", content: "内部の SQL 生成ってどうなってるの？" },
+          ] },
+        { id: "n_query", treeId: "t_laravel", parentId: "n_eloquent", branchFromIndex: 2,
+          title: "内部のクエリ生成",
+          messages: [
+            { id: "m7", role: "user", content: "クエリビルダはどうやって SQL を組み立てている？" },
+            { id: "m8", role: "assistant", content: "メソッドチェーンで条件を貯めて、最後に文字列の SQL とバインド値に変換します。ここで PDO のプリペアドステートメントが使われます。" },
+            { id: "m9", role: "user", content: "PDO って何？ そもそも DB 接続の低レイヤーが気になってきた…" },
+          ] },
+        { id: "n_pdo", treeId: "t_laravel", parentId: "n_query", branchFromIndex: 2,
+          title: "PDO / DB低レイヤー（脱線）",
+          messages: [
+            { id: "m10", role: "user", content: "PDO とコネクションプールの仕組みを教えて" },
+            { id: "m11", role: "assistant", content: "PDO は PHP の DB 抽象化層で…（ここまで来ると元の『Laravelの使い方』からかなり深く潜っています）" },
+          ] },
+        { id: "n_migration", treeId: "t_laravel", parentId: "n_root", branchFromIndex: 2,
+          title: "マイグレーション（別方向）",
+          messages: [
+            { id: "m12", role: "user", content: "マイグレーションってどう書くの？" },
+            { id: "m13", role: "assistant", content: "Schema::create でテーブル定義を PHP で記述します。up/down でロールバックも管理できます。" },
+          ] },
+      ];
+
+      // ---------- store ----------
+      const StoreContext = createContext(null);
+      function StoreProvider({ children }) {
+        const [nodes, setNodes] = useState(initialNodes);
+        const [selectedTreeId, setSelectedTreeId] = useState("t_laravel");
+        const [selectedNodeId, setSelectedNodeId] = useState("n_pdo");
+
+        const value = useMemo(() => {
+          const nodeById = (id) => nodes.find((n) => n.id === id);
+          const rootOf = (treeId) => nodes.find((n) => n.treeId === treeId && n.parentId === null);
+          const childrenOf = (nodeId) => nodes.filter((n) => n.parentId === nodeId);
+          const pathTo = (nodeId) => {
+            const path = []; let cur = nodeById(nodeId);
+            while (cur) { path.unshift(cur); cur = cur.parentId ? nodeById(cur.parentId) : undefined; }
+            return path;
+          };
+          const selectTree = (treeId) => { setSelectedTreeId(treeId); const r = rootOf(treeId); if (r) setSelectedNodeId(r.id); };
+          const selectNode = (nodeId) => setSelectedNodeId(nodeId);
+          const branchFrom = (nodeId, messageIndex) => {
+            const parent = nodeById(nodeId); if (!parent) return;
+            const id = nextId("n");
+            const child = { id, treeId: parent.treeId, parentId: parent.id, branchFromIndex: messageIndex,
+              title: "新しい枝", messages: [{ id: nextId("m"), role: "user", content: "（ここに脱線した質問を書く）" }] };
+            setNodes((prev) => [...prev, child]); setSelectedNodeId(id);
+          };
+          const sendMessage = (content) => {
+            const userMsg = { id: nextId("m"), role: "user", content };
+            const reply = { id: nextId("m"), role: "assistant", content: "（AIのダミー回答）" + content + " について説明します…" };
+            setNodes((prev) => prev.map((n) => n.id === selectedNodeId ? { ...n, messages: [...n.messages, userMsg, reply] } : n));
+          };
+          return { trees, nodes, selectedTreeId, selectedNodeId, selectTree, selectNode, branchFrom, sendMessage, pathTo, childrenOf, rootOf };
+        }, [nodes, selectedTreeId, selectedNodeId]);
+
+        return <StoreContext.Provider value={value}>{children}</StoreContext.Provider>;
+      }
+      const useStore = () => useContext(StoreContext);
+
+      // ---------- shared components ----------
+      function ThemeSidebar({ compact }) {
+        const { trees, selectedTreeId, selectTree } = useStore();
+        return (
+          <aside className={"theme-sidebar" + (compact ? " compact" : "")}>
+            <div className="sidebar-head">学習テーマ</div>
+            <ul className="theme-list">
+              {trees.map((t) => (
+                <li key={t.id} className={t.id === selectedTreeId ? "active" : ""} onClick={() => selectTree(t.id)}>
+                  <span className="theme-dot" />{t.title}
+                </li>
+              ))}
+            </ul>
+            <button className="new-theme">＋ 新しいテーマ</button>
+          </aside>
+        );
+      }
+
+      function ChatPanel({ showBreadcrumb }) {
+        const { nodes, selectedNodeId, pathTo, branchFrom, sendMessage, selectNode } = useStore();
+        const node = nodes.find((n) => n.id === selectedNodeId);
+        const [draft, setDraft] = useState("");
+        if (!node) return <div className="chat-panel">ノードを選択してください</div>;
+        const path = pathTo(node.id);
+        return (
+          <section className="chat-panel">
+            {showBreadcrumb && (
+              <nav className="breadcrumb">
+                {path.map((p, i) => (
+                  <span key={p.id}>
+                    {i > 0 && <span className="sep">›</span>}
+                    <button className={p.id === node.id ? "crumb current" : "crumb"} onClick={() => selectNode(p.id)}>{p.title}</button>
+                  </span>
+                ))}
+              </nav>
+            )}
+            <div className="chat-title">{node.title}</div>
+            <div className="messages">
+              {node.messages.map((m, idx) => (
+                <div key={m.id} className={"msg " + m.role}>
+                  <div className="bubble">{m.content}</div>
+                  {m.role === "assistant" && (
+                    <button className="branch-btn" title="この回答から枝を作る" onClick={() => branchFrom(node.id, idx)}>⌥ ここから枝を作る</button>
+                  )}
+                </div>
+              ))}
+            </div>
+            <form className="composer" onSubmit={(e) => { e.preventDefault(); if (!draft.trim()) return; sendMessage(draft.trim()); setDraft(""); }}>
+              <input value={draft} onChange={(e) => setDraft(e.target.value)} placeholder="続けて質問する…" />
+              <button type="submit">送信</button>
+            </form>
+          </section>
+        );
+      }
+
+      function Branch({ node, pathIds, selectedNodeId }) {
+        const { childrenOf, selectNode } = useStore();
+        const children = childrenOf(node.id);
+        const isCurrent = node.id === selectedNodeId;
+        const onPath = pathIds.has(node.id);
+        return (
+          <div className="branch">
+            <button className={"tree-node" + (isCurrent ? " current" : "") + (onPath ? " on-path" : "")} onClick={() => selectNode(node.id)}>
+              <span className="tn-title">{node.title}</span>
+              {isCurrent && <span className="here">今ここ</span>}
+            </button>
+            {children.length > 0 && (
+              <div className="children">
+                {children.map((c) => <Branch key={c.id} node={c} pathIds={pathIds} selectedNodeId={selectedNodeId} />)}
+              </div>
+            )}
+          </div>
+        );
+      }
+      function NestedTree({ emphasize }) {
+        const { selectedTreeId, selectedNodeId, rootOf, pathTo } = useStore();
+        const root = rootOf(selectedTreeId);
+        if (!root) return null;
+        const pathIds = new Set(pathTo(selectedNodeId).map((n) => n.id));
+        return <div className={"nested-tree" + (emphasize ? " emphasize" : "")}><Branch node={root} pathIds={pathIds} selectedNodeId={selectedNodeId} /></div>;
+      }
+
+      function RadialTree() {
+        const { selectedTreeId, selectedNodeId, rootOf, childrenOf, pathTo, selectNode } = useStore();
+        const root = rootOf(selectedTreeId);
+        if (!root) return null;
+        const W = 360, H = 360, cx = W / 2, cy = H / 2, ringStep = 70;
+        const leaves = [];
+        const collectLeaves = (n) => { const ch = childrenOf(n.id); if (ch.length === 0) leaves.push(n); else ch.forEach(collectLeaves); };
+        collectLeaves(root);
+        const angleOf = new Map();
+        leaves.forEach((leaf, i) => angleOf.set(leaf.id, (i + 0.5) * ((2 * Math.PI) / Math.max(leaves.length, 1))));
+        const resolveAngle = (n) => {
+          if (angleOf.has(n.id)) return angleOf.get(n.id);
+          const ch = childrenOf(n.id);
+          const a = ch.reduce((s, c) => s + resolveAngle(c), 0) / ch.length;
+          angleOf.set(n.id, a); return a;
+        };
+        resolveAngle(root);
+        const positions = []; const edges = [];
+        const place = (n, depth) => {
+          const angle = angleOf.get(n.id); const r = depth * ringStep;
+          const x = depth === 0 ? cx : cx + r * Math.cos(angle);
+          const y = depth === 0 ? cy : cy + r * Math.sin(angle);
+          const pos = { node: n, x, y, depth }; positions.push(pos);
+          childrenOf(n.id).forEach((c) => { const cp = place(c, depth + 1); edges.push({ from: pos, to: cp }); });
+          return pos;
+        };
+        place(root, 0);
+        const pathIds = new Set(pathTo(selectedNodeId).map((n) => n.id));
+        return (
+          <div className="radial-wrap">
+            <svg width={W} height={H} className="radial-svg">
+              {edges.map((e, i) => (
+                <line key={i} x1={e.from.x} y1={e.from.y} x2={e.to.x} y2={e.to.y}
+                  className={pathIds.has(e.from.node.id) && pathIds.has(e.to.node.id) ? "edge on-path" : "edge"} />
+              ))}
+              {positions.map((p) => {
+                const isCurrent = p.node.id === selectedNodeId; const onPath = pathIds.has(p.node.id);
+                return (
+                  <g key={p.node.id} transform={"translate(" + p.x + "," + p.y + ")"} className="radial-node" onClick={() => selectNode(p.node.id)}>
+                    <circle r={isCurrent ? 11 : 7} className={"rnode" + (isCurrent ? " current" : onPath ? " on-path" : "")} />
+                    <text x={12} y={4} className="rlabel">{p.node.title.length > 12 ? p.node.title.slice(0, 12) + "…" : p.node.title}</text>
+                  </g>
+                );
+              })}
+            </svg>
+          </div>
+        );
+      }
+
+      function Row({ node, depth, pathIds, selectedNodeId }) {
+        const { childrenOf, selectNode } = useStore();
+        const children = childrenOf(node.id);
+        const [open, setOpen] = useState(true);
+        const isCurrent = node.id === selectedNodeId; const onPath = pathIds.has(node.id);
+        return (
+          <div>
+            <div className={"indent-row" + (isCurrent ? " current" : "") + (onPath ? " on-path" : "")} style={{ paddingLeft: depth * 16 + 8 }}>
+              {children.length > 0
+                ? <span className="caret" onClick={(e) => { e.stopPropagation(); setOpen((o) => !o); }}>{open ? "▾" : "▸"}</span>
+                : <span className="caret empty">•</span>}
+              <span className="indent-label" onClick={() => selectNode(node.id)}>{node.title}</span>
+              {isCurrent && <span className="here">今ここ</span>}
+            </div>
+            {open && children.map((c) => <Row key={c.id} node={c} depth={depth + 1} pathIds={pathIds} selectedNodeId={selectedNodeId} />)}
+          </div>
+        );
+      }
+      function IndentTree() {
+        const { selectedTreeId, selectedNodeId, rootOf, pathTo } = useStore();
+        const root = rootOf(selectedTreeId);
+        if (!root) return null;
+        const pathIds = new Set(pathTo(selectedNodeId).map((n) => n.id));
+        return <div className="indent-tree"><Row node={root} depth={0} pathIds={pathIds} selectedNodeId={selectedNodeId} /></div>;
+      }
+
+      // ---------- mind map (horizontal, bezier) ----------
+      function MindMap({ large }) {
+        const { selectedTreeId, selectedNodeId, rootOf, childrenOf, pathTo, selectNode } = useStore();
+        const root = rootOf(selectedTreeId);
+        if (!root) return null;
+        const xStep = large ? 230 : 188;
+        const yStep = large ? 66 : 56;
+        const padX = 16, padY = 28;
+        const pill = large ? { w: 180, h: 40 } : { w: 156, h: 34 };
+        let slot = 0;
+        const yOf = new Map();
+        const assign = (n) => {
+          const ch = childrenOf(n.id);
+          if (ch.length === 0) { yOf.set(n.id, slot++); return yOf.get(n.id); }
+          const ys = ch.map(assign);
+          const y = (ys[0] + ys[ys.length - 1]) / 2;
+          yOf.set(n.id, y); return y;
+        };
+        assign(root);
+        const totalLeaves = slot;
+        const nodes = []; const edges = [];
+        const place = (n, depth) => {
+          const x = padX + depth * xStep;
+          const y = padY + yOf.get(n.id) * yStep;
+          const pos = { node: n, x, y, depth }; nodes.push(pos);
+          childrenOf(n.id).forEach((c) => { const cp = place(c, depth + 1); edges.push({ from: pos, to: cp }); });
+          return pos;
+        };
+        place(root, 0);
+        const maxDepth = Math.max.apply(null, nodes.map((n) => n.depth));
+        const width = padX * 2 + maxDepth * xStep + pill.w + 20;
+        const height = padY * 2 + Math.max(totalLeaves - 1, 1) * yStep + 40;
+        const pathIds = new Set(pathTo(selectedNodeId).map((n) => n.id));
+        return (
+          <div className="mm-wrap">
+            <svg width={width} height={height} className="mm-svg">
+              {edges.map((e, i) => {
+                const x1 = e.from.x + pill.w, y1 = e.from.y, x2 = e.to.x, y2 = e.to.y;
+                const mx = (x1 + x2) / 2;
+                const d = "M " + x1 + " " + y1 + " C " + mx + " " + y1 + ", " + mx + " " + y2 + ", " + x2 + " " + y2;
+                const on = pathIds.has(e.from.node.id) && pathIds.has(e.to.node.id);
+                return <path key={i} d={d} className={on ? "mm-edge on-path" : "mm-edge"} fill="none" />;
+              })}
+              {nodes.map((p) => {
+                const isCur = p.node.id === selectedNodeId; const onP = pathIds.has(p.node.id);
+                const cls = "mm-pill" + (p.depth === 0 ? " root" : "") + (isCur ? " current" : onP ? " on-path" : "");
+                return (
+                  <foreignObject key={p.node.id} x={p.x} y={p.y - pill.h / 2} width={pill.w} height={pill.h}>
+                    <div className={cls} onClick={() => selectNode(p.node.id)} title={p.node.title}>
+                      <span className="mm-label">{p.node.title}</span>
+                      {isCur && <span className="mm-here">今</span>}
+                    </div>
+                  </foreignObject>
+                );
+              })}
+            </svg>
+          </div>
+        );
+      }
+
+      function Layout6() {
+        const [leftOpen, setLeftOpen] = useState(true);
+        const [rightOpen, setRightOpen] = useState(true);
+        const [full, setFull] = useState(false);
+        const cols = (leftOpen ? "220px" : "0px") + " 1fr " + (rightOpen ? "380px" : "0px");
+        return (
+          <div className="layout layout6" style={{ gridTemplateColumns: cols }}>
+            <div className="collapsible left" style={{ display: leftOpen ? "block" : "none" }}>
+              <ThemeSidebar />
+            </div>
+            <div className="center6">
+              <div className="toolbar6">
+                <button onClick={() => setLeftOpen((o) => !o)}>{leftOpen ? "⟨ テーマを隠す" : "テーマを表示 ⟩"}</button>
+                <div className="spacer" />
+                <button onClick={() => setFull(true)}>マインドマップ全画面 ⤢</button>
+                <button onClick={() => setRightOpen((o) => !o)}>{rightOpen ? "マップを隠す ⟩" : "⟨ マップを表示"}</button>
+              </div>
+              <ChatPanel showBreadcrumb />
+            </div>
+            <div className="collapsible right" style={{ display: rightOpen ? "block" : "none" }}>
+              <div className="right-pane">
+                <div className="sidebar-head">思考の樹形図（マインドマップ）</div>
+                <div style={{ flex: 1, minHeight: 0 }}><MindMap /></div>
+              </div>
+            </div>
+            {full && (
+              <div className="fullscreen-tree" onClick={() => setFull(false)}>
+                <div className="ft-inner big" onClick={(e) => e.stopPropagation()}>
+                  <div className="ft-head"><span>思考の樹形図（マインドマップ・全画面）</span><button onClick={() => setFull(false)}>閉じる ✕</button></div>
+                  <div className="ft-canvas"><MindMap large /></div>
+                </div>
+              </div>
+            )}
+          </div>
+        );
+      }
+
+      // ---------- layouts ----------
+      function Layout1() {
+        return (<div className="layout three-pane"><ThemeSidebar /><ChatPanel />
+          <aside className="right-pane"><div className="sidebar-head">思考の樹形図</div><NestedTree /></aside></div>);
+      }
+      function Layout2() {
+        return (<div className="layout three-pane right-heavy"><ThemeSidebar compact /><ChatPanel showBreadcrumb />
+          <aside className="right-pane wide"><div className="sidebar-head">思考の樹形図（現在地を強調）</div><NestedTree emphasize /></aside></div>);
+      }
+      function Layout3() {
+        return (<div className="layout three-pane"><ThemeSidebar /><ChatPanel />
+          <aside className="right-pane"><div className="sidebar-head">思考の樹形図（放射状）</div><RadialTree /></aside></div>);
+      }
+      function Layout4() {
+        return (<div className="layout three-pane"><ThemeSidebar /><ChatPanel />
+          <aside className="right-pane"><div className="sidebar-head">思考の樹形図（インデント）</div><IndentTree /></aside></div>);
+      }
+      function Layout5() {
+        const [full, setFull] = useState(false);
+        return (
+          <div className="layout two-pane">
+            <ThemeSidebar />
+            <div className="center-wrap">
+              <ChatPanel />
+              <div className="minimap">
+                <div className="minimap-head"><span>樹形図</span><button onClick={() => setFull(true)}>全画面 ⤢</button></div>
+                <div className="minimap-body"><NestedTree /></div>
+              </div>
+            </div>
+            {full && (
+              <div className="fullscreen-tree" onClick={() => setFull(false)}>
+                <div className="ft-inner" onClick={(e) => e.stopPropagation()}>
+                  <div className="ft-head"><span>思考の樹形図（全画面）</span><button onClick={() => setFull(false)}>閉じる ✕</button></div>
+                  <RadialTree />
+                </div>
+              </div>
+            )}
+          </div>
+        );
+      }
+
+      const layouts = [
+        { id: "l1", label: "案1 王道3ペイン", note: "最も無難・学習コスト最小。左テーマ／中央チャット／右に縦型ツリー。", render: () => <Layout1 /> },
+        { id: "l2", label: "案2 右ツリー強調", note: "右を広く・現在地を強調・パンくず常時。痛みB（気づけない）に全振り。", render: () => <Layout2 /> },
+        { id: "l3", label: "案3 ラジアル", note: "中心＝テーマの放射状。俯瞰の地図感が強く映える。", render: () => <Layout3 /> },
+        { id: "l4", label: "案4 インデント", note: "ファイルツリー風の折りたたみ。情報密度高く深い木に強い。", render: () => <Layout4 /> },
+        { id: "l5", label: "案5 ミニマップ＋全画面", note: "普段はチャット＋小さなミニマップ、ボタンで全画面の樹形図に切替。", render: () => <Layout5 /> },
+        { id: "l6", label: "案6 マインドマップ（採用候補）", note: "チャット主役。左テーマ／右マインドマップは開閉可、全画面化も可。中心テーマから枝が曲線で広がる。", render: () => <Layout6 /> },
+      ];
+
+      function App() {
+        const [active, setActive] = useState("l6");
+        const current = layouts.find((l) => l.id === active);
+        return (
+          <StoreProvider>
+            <div className="app">
+              <header className="topbar">
+                <div className="brand">思考の樹形図 — モック比較</div>
+                <div className="switcher">
+                  {layouts.map((l) => (
+                    <button key={l.id} className={l.id === active ? "tab active" : "tab"} onClick={() => setActive(l.id)}>{l.label}</button>
+                  ))}
+                </div>
+              </header>
+              <div className="note-bar">{current.note}</div>
+              <main className="stage">{current.render()}</main>
+            </div>
+          </StoreProvider>
+        );
+      }
+
+      ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+    </script>
+  </body>
+</html>

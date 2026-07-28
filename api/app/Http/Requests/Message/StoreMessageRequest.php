@@ -24,9 +24,23 @@ class StoreMessageRequest extends FormRequest
     public function rules(): array
     {
         // `role` is a plain string column validated at the app layer (no DB enum).
+        // Same cap as ChatRequest — see the note there on the TEXT byte limit.
         return [
             'role' => ['required', 'in:user,assistant'],
-            'content' => ['required', 'string'],
+            'content' => ['required', 'string', 'max:10000'],
+        ];
+    }
+
+    /**
+     * Same wording as ChatRequest: both end up in front of the user.
+     *
+     * @return array<string, string>
+     */
+    public function messages(): array
+    {
+        return [
+            'content.required' => '本文を入力してください。',
+            'content.max' => '本文が長すぎます（:max 文字まで）。',
         ];
     }
 }

@@ -1,8 +1,29 @@
 import { useState, type FormEvent } from "react";
+import { ApiValidationError, RateLimitedError } from "../api/client";
 import { useMessages, useNodePath } from "../api/queries";
 import { isOptimistic, useCreateBranch, useSendChat } from "../api/mutations";
 import { useSelection } from "../selection/SelectionContext";
 import { nodeLabel } from "../tree";
+
+/**
+ * Turn a failed send into something worth reading.
+ *
+ * The API answers in English for the generic cases (429 is "Too Many
+ * Attempts."), and the rate limit in particular needs explaining — being
+ * refused for a minute is deliberate, not a fault.
+ */
+function sendErrorMessage(error: unknown): string {
+  if (error instanceof RateLimitedError) {
+    const wait = error.retryAfter
+      ? `${error.retryAfter} 秒`
+      : "しばらく";
+    return `送信の間隔が短すぎます。${wait}おいてから試してください。`;
+  }
+  if (error instanceof ApiValidationError) {
+    return error.first("content") ?? error.message;
+  }
+  return error instanceof Error ? error.message : "送信に失敗しました。";
+}
 
 export function ChatPanel({ showBreadcrumb = false }: { showBreadcrumb?: boolean }) {
   const { selectedProjectId, selectedNodeId, selectNode } = useSelection();
@@ -136,11 +157,7 @@ export function ChatPanel({ showBreadcrumb = false }: { showBreadcrumb?: boolean
         )}
 
         {sendChat.isError && (
-          <p className="pane-note error">
-            {sendChat.error instanceof Error
-              ? sendChat.error.message
-              : "送信に失敗しました。"}
-          </p>
+          <p className="pane-note error">{sendErrorMessage(sendChat.error)}</p>
         )}
         {createBranch.isError && (
           <p className="pane-note error">枝を作成できませんでした。</p>

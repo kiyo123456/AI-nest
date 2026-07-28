@@ -27,7 +27,11 @@ return [
 
     'allowed_headers' => ['*'],
 
-    'exposed_headers' => [],
+    // A cross-origin response only hands the SPA the CORS-safelisted headers
+    // unless they are named here. Retry-After carries the seconds the chat
+    // rate limiter wants the user to wait, which is the difference between
+    // "wait a moment" and "wait 43 seconds".
+    'exposed_headers' => ['Retry-After'],
 
     'max_age' => 0,
 

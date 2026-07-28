@@ -113,6 +113,95 @@ it('keeps the user message when the AI call fails', function () {
     $this->assertDatabaseMissing('messages', ['node_id' => $node->id, 'role' => 'assistant']);
 });
 
+it('rejects content longer than the column can hold', function () {
+    $user = User::factory()->create();
+    $node = chatNodeOwnedBy($user);
+
+    // `messages.content` is a TEXT column (65,535 bytes); the 10,000-character
+    // rule keeps a multi-byte message well inside it, so overflow is a 422
+    // rather than a database error surfacing as a 500.
+    $this->actingAs($user)
+        ->postJson("/api/nodes/{$node->id}/chat", ['content' => str_repeat('あ', 10_001)])
+        ->assertStatus(422)
+        ->assertJsonValidationErrorFor('content');
+
+    $this->assertDatabaseCount('messages', 0);
+});
+
+it('accepts content exactly at the limit', function () {
+    $user = User::factory()->create();
+    $node = chatNodeOwnedBy($user);
+    fakeAiReply();
+
+    $this->actingAs($user)
+        ->postJson("/api/nodes/{$node->id}/chat", ['content' => str_repeat('あ', 10_000)])
+        ->assertCreated();
+});
+
+it('throttles a second chat within the minute', function () {
+    $user = User::factory()->create();
+    $node = chatNodeOwnedBy($user);
+
+    // Exactly one call is expected: the throttled request must never reach
+    // the provider, which is what makes it cost nothing.
+    test()->mock(AnthropicClient::class)
+        ->shouldReceive('chat')
+        ->once()
+        ->andReturn('AI からの回答');
+
+    $this->actingAs($user)
+        ->postJson("/api/nodes/{$node->id}/chat", ['content' => '1回目'])
+        ->assertCreated();
+
+    $this->actingAs($user)
+        ->postJson("/api/nodes/{$node->id}/chat", ['content' => '2回目'])
+        ->assertStatus(429);
+
+    // The blocked turn is not stored either — the request never got that far.
+    $this->assertDatabaseMissing('messages', ['content' => '2回目']);
+});
+
+it('keeps counting the daily allowance across minutes', function () {
+    // Lowered here rather than sending 50 requests; the limiter reads config
+    // per request, so the production numbers stay untouched.
+    config()->set('services.anthropic.rate_limit.per_minute', 1);
+    config()->set('services.anthropic.rate_limit.per_day', 2);
+
+    $user = User::factory()->create();
+    $node = chatNodeOwnedBy($user);
+    fakeAiReply();
+
+    // Time has to move between requests, and that is the whole point: the
+    // daily tally must survive the per-minute window expiring. Sending three
+    // requests back to back would pass even if both windows shared one
+    // counter, because nothing would have expired yet.
+    $this->actingAs($user)->postJson("/api/nodes/{$node->id}/chat", ['content' => '1'])->assertCreated();
+
+    $this->travel(61)->seconds();
+    $this->actingAs($user)->postJson("/api/nodes/{$node->id}/chat", ['content' => '2'])->assertCreated();
+
+    $this->travel(61)->seconds();
+    $this->actingAs($user)->postJson("/api/nodes/{$node->id}/chat", ['content' => '3'])->assertStatus(429);
+});
+
+it('counts the chat allowance per user, not per connection', function () {
+    $user = User::factory()->create();
+    $other = User::factory()->create();
+    $node = chatNodeOwnedBy($user);
+    $otherNode = chatNodeOwnedBy($other);
+    fakeAiReply();
+
+    $this->actingAs($user)
+        ->postJson("/api/nodes/{$node->id}/chat", ['content' => 'hi'])
+        ->assertCreated();
+
+    // Same IP, different account: keying the limiter by user (not by IP) means
+    // their allowance is untouched, so this must not be throttled.
+    $this->actingAs($other)
+        ->postJson("/api/nodes/{$otherNode->id}/chat", ['content' => 'hi'])
+        ->assertCreated();
+});
+
 it('rejects a chat request without content', function () {
     $user = User::factory()->create();
     $node = chatNodeOwnedBy($user);

@@ -4,7 +4,9 @@ use App\Models\Message;
 use App\Models\Node;
 use App\Models\Project;
 use App\Models\User;
+use App\Services\ContextBuilder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\DB;
 
 use function Pest\Laravel\getJson;
 
@@ -57,6 +59,30 @@ function buildBranchingTree(User $user): array
     return ['project' => $project, 'A' => $a, 'B' => $b, 'D' => $d, 'messages' => [$a1, $a2, $b1, $b2, $d1, $d2]];
 }
 
+/**
+ * Build a straight chain of `$depth` nodes, each holding two messages and
+ * branching off its parent's first message. Returns the deepest node.
+ */
+function buildChain(User $user, int $depth): Node
+{
+    $project = Project::factory()->for($user)->create();
+    $parent = null;
+    $branchFrom = null;
+
+    for ($i = 0; $i < $depth; $i++) {
+        $node = Node::factory()->for($project)->create([
+            'summary' => "n{$i}",
+            'parent_id' => $parent?->id,
+            'branch_from_message_id' => $branchFrom?->id,
+        ]);
+        $branchFrom = addMessage($node, "m{$i}a");
+        addMessage($node, "m{$i}b");
+        $parent = $node;
+    }
+
+    return $parent;
+}
+
 it('returns the ancestor path root → node', function () {
     $user = User::factory()->create();
     $tree = buildBranchingTree($user);
@@ -104,6 +130,39 @@ it('returns all messages for a root node context', function () {
 
     $response->assertOk();
     expect(collect($response->json('data'))->pluck('id')->all())->toBe([$m1->id, $m2->id]);
+});
+
+/**
+ * Guards against the N+1 this used to have: the builder walked the ancestor
+ * path and asked each node for its messages separately, so the query count
+ * grew with the depth of the tree — and depth is exactly what this product
+ * encourages. Asserting that a deep path costs the same as a shallow one
+ * states "constant in depth" directly, and unlike a hard-coded number it does
+ * not break if a legitimate constant query is added later.
+ */
+it('does not run more queries as the path gets deeper', function () {
+    $user = User::factory()->create();
+    $shallow = buildChain($user, 3);
+    $deep = buildChain($user, 8);
+
+    $queries = 0;
+    DB::listen(function () use (&$queries): void {
+        $queries++;
+    });
+
+    $builder = app(ContextBuilder::class);
+
+    // One listener, reset between runs: listeners cannot be detached, so a
+    // second DB::listen would double-count the first counter's queries.
+    $queries = 0;
+    $builder->build($shallow);
+    $shallowQueries = $queries;
+
+    $queries = 0;
+    $builder->build($deep);
+    $deepQueries = $queries;
+
+    expect($deepQueries)->toBe($shallowQueries);
 });
 
 it('rejects unauthenticated access to path and context', function () {

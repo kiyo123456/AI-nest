@@ -8,6 +8,7 @@ import {
 import { useNodePath, useNodes } from "../../api/queries";
 import { useSelection } from "../../selection/SelectionContext";
 import { layoutTree, nodeLabel, rootOf } from "../../tree";
+import { CenterOnSelection } from "./CenterOnSelection";
 import { PillNode, type PillNodeType } from "./PillNode";
 
 /** Pill geometry, shared by the layout maths and the CSS. */
@@ -114,6 +115,10 @@ export function MindMap() {
         elementsSelectable={false}
       >
         <Controls showInteractive={false} />
+        <CenterOnSelection
+          nodeId={selectedNodeId}
+          nodeCount={flowNodes.length}
+        />
       </ReactFlow>
     </div>
   );

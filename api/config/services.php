@@ -40,6 +40,16 @@ return [
         'key' => env('ANTHROPIC_API_KEY'),
         'model' => env('ANTHROPIC_MODEL', 'claude-opus-5'),
         'max_tokens' => (int) env('ANTHROPIC_MAX_TOKENS', 4096),
+
+        /*
+         * Chat is the only endpoint that costs money, so it is the only one
+         * that is rate limited. The per-minute limit stops a runaway loop or
+         * a double click; the per-day limit is what actually caps the bill.
+         */
+        'rate_limit' => [
+            'per_minute' => (int) env('ANTHROPIC_RATE_LIMIT_PER_MINUTE', 1),
+            'per_day' => (int) env('ANTHROPIC_RATE_LIMIT_PER_DAY', 50),
+        ],
     ],
 
 ];

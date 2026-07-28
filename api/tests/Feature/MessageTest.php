@@ -89,6 +89,23 @@ it('rejects a message without content', function () {
         ->assertJsonValidationErrorFor('content');
 });
 
+it('rejects a message longer than the column can hold', function () {
+    $user = User::factory()->create();
+    $node = nodeOwnedBy($user);
+
+    // Same cap as the chat endpoint: without it a long multi-byte message
+    // overflows the TEXT column and the database error surfaces as a 500.
+    $this->actingAs($user)
+        ->postJson("/api/nodes/{$node->id}/messages", [
+            'role' => 'user',
+            'content' => str_repeat('あ', 10_001),
+        ])
+        ->assertStatus(422)
+        ->assertJsonValidationErrorFor('content');
+
+    $this->assertDatabaseCount('messages', 0);
+});
+
 it('forbids appending a message to another user\'s node', function () {
     $user = User::factory()->create();
     $node = Node::factory()->create();

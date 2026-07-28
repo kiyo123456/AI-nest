@@ -28,7 +28,11 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('nodes/{node}/context', [NodeController::class, 'context'])->name('nodes.context');
 
     // Ask the AI within a node's thread (stores both the question and the reply).
-    Route::post('nodes/{node}/chat', NodeChatController::class)->name('nodes.chat');
+    // The only endpoint that costs money, hence the only one that is throttled
+    // (see AppServiceProvider::configureAiChatRateLimit).
+    Route::post('nodes/{node}/chat', NodeChatController::class)
+        ->middleware('throttle:ai-chat')
+        ->name('nodes.chat');
 
     // Messages — appended to / listed from a node's thread.
     Route::apiResource('nodes.messages', MessageController::class)

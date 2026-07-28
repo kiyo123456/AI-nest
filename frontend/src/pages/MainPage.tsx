@@ -1,11 +1,11 @@
 import { useState } from "react";
 import { Layout6 } from "../layouts";
-import { StoreProvider } from "../store";
+import { SelectionProvider } from "../selection/SelectionContext";
 import { useAuth } from "../auth/AuthContext";
 
 /**
- * The adopted layout (案6). Still driven by the in-memory prototype store —
- * wiring it to the real projects/nodes/messages API is the next slice.
+ * The adopted layout (案6), backed by the real projects/nodes/messages API.
+ * Write operations (new theme, sending a message, branching) land next slice.
  */
 export function MainPage() {
   const { user, logout } = useAuth();
@@ -21,7 +21,7 @@ export function MainPage() {
   }
 
   return (
-    <StoreProvider>
+    <SelectionProvider>
       <div className="app">
         <header className="topbar">
           <div className="brand">思考の樹形図</div>
@@ -39,6 +39,6 @@ export function MainPage() {
           <Layout6 />
         </main>
       </div>
-    </StoreProvider>
+    </SelectionProvider>
   );
 }

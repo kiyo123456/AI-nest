@@ -741,3 +741,94 @@ body {
   opacity: 0.6;
   cursor: default;
 }
+
+/* ---------- pane状態表示（読み込み中 / 空 / エラー）Step6-2 ---------- */
+.pane-note {
+  margin: 12px 16px;
+  color: var(--text-dim);
+  font-size: 13px;
+}
+
+.pane-note.error {
+  color: #ffb4b4;
+}
+
+/* 送信中など、一時的に操作できない状態 */
+.composer input:disabled,
+.composer button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+/* ---------- 書き込み操作のインラインフォーム（Step6-3） ---------- */
+/* 送信直後の自分の発話（まだ保存確定していない） */
+.bubble.pending {
+  opacity: 0.6;
+}
+
+/* AI の応答待ち */
+.bubble.thinking {
+  color: var(--text-dim);
+  font-style: italic;
+}
+
+.branch-form,
+.theme-form {
+  display: flex;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.theme-form {
+  flex-direction: column;
+  padding: 0 12px;
+}
+
+.theme-form-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.branch-form input,
+.theme-form input {
+  flex: 1;
+  min-width: 0;
+  padding: 6px 9px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--panel-2);
+  color: var(--text);
+  font-size: 13px;
+}
+
+.branch-form input:focus,
+.theme-form input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.branch-form button,
+.theme-form button {
+  padding: 6px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--panel-2);
+  color: var(--text);
+  font-size: 13px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.branch-form button[type="submit"],
+.theme-form button[type="submit"] {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #0f1117;
+  font-weight: 600;
+}
+
+.branch-form button:disabled,
+.theme-form button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}

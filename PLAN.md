@@ -19,7 +19,7 @@ graph TD
 
 進行ルール: AIは答えを押し付けず、問いとトレードオフを提示して本人の判断を引き出す。各フェーズの結論をプランに追記して資産化する。
 
-進捗: Phase1〜6 完了 / Phase7（実装）進行中 — Step1〜5 完了（バックエンドの主機能が一通り動く）。**Step6 は4スライスに分割し、6-1（フロント土台＋認証）完了**＝ブラウザから実際にログインでき、リロードでセッションが復元される。次は 6-2（メイン画面を実データに接続）。
+進捗: Phase1〜6 完了 / Phase7（実装）進行中 — Step1〜5 完了（バックエンドの主機能が一通り動く）。**Step6 は4スライスに分割し、6-1（土台＋認証）・6-2（実データ接続）・6-3（書き込み系）・6-4（@xyflow/react で pan/zoom）すべて完了**＝ブラウザ上で AI と対話し、脱線したら自分の手で枝を作り、その全体像を地図として俯瞰できる**中核体験が成立**。**Step7（仕上げ）も分割し、7-1（選択ノードの自動センタリング＋`ContextBuilder` の N+1 解消）・7-2（`content` の上限／チャットのレート制限／401 のフロント処理）完了**。次は発展課題（AIが話題転換を検知して枝を提案）。
 
 ---
 
@@ -60,7 +60,7 @@ graph TD
 - 採用: 案6 マインドマップ型。
   - チャット主役（中央・パンくず付き）。左テーマ／右マインドマップは各々開閉可、全画面化も可。
   - マインドマップは中心テーマから子へ曲線(ベジェ)で広がる横型。現在地までの経路をハイライト。
-  - Phase7 で @xyflow/react に載せ替えて pan/zoom 対応にする。
+  - Phase7 Step6-4 で @xyflow/react に載せ替えて pan/zoom 対応にした ✅。**座標計算はライブラリに任せず自前のまま**（xyflow はレイアウトを持たないため、木の形は自分のコードが決める）。
 
 ## Phase5 技術選定・アーキテクチャ（確定）
 
@@ -118,14 +118,14 @@ erDiagram
 - 狙い: 各スライスで評価軸 Lv1（技術選択の理由を説明できる）/ Lv2（失敗・判断・解決を語れる）/ Lv3（トレードオフ・拡張性を語れる）を担保する。AI任せで説明できない「バイブコーディング」を避けることが絶対条件。
 - 記録先: `api/README.md` の設計判断ログ（＝そのまま面接台本にする）。
 
-進捗: Step1〜3 ／ Step4 スライス1（projects CRUD＋`ProjectPolicy`）／ Step4 スライス2（nodes+messages CRUD＋`NodePolicy`, shallow nest, 葉のみ削除）／ 橋渡し（`Node::ancestorPath()` 再帰CTE＋`ContextBuilder`・path/context API）／ **Step5（AI連携: 公式PHP SDK＋`AnthropicClient` ラッパ・同期・`POST /nodes/{node}/chat`）** 完了。**全57件緑**（AI呼び出しはモックのため課金なし）。設計判断は `api/README.md`。次は Step6（フロント React SPA）。具体タスクは [CHECKLIST.md](CHECKLIST.md)。
+進捗: Step1〜3 ／ Step4 スライス1（projects CRUD＋`ProjectPolicy`）／ Step4 スライス2（nodes+messages CRUD＋`NodePolicy`, shallow nest, 葉のみ削除）／ 橋渡し（`Node::ancestorPath()` 再帰CTE＋`ContextBuilder`・path/context API）／ Step5（AI連携: 公式PHP SDK＋`AnthropicClient` ラッパ・同期・`POST /nodes/{node}/chat`）／ **Step6-1（土台＋Sanctum認証）・6-2（実データ接続: TanStack Query＋`/path` API＋シーダー）・6-3（書き込み系: 楽観的更新のチャット送信・枝作成・テーマ作成）・6-4（@xyflow/react で pan/zoom。座標計算は自前の `layoutTree` を維持）** 完了＝**Step6 完了**／**Step7-1（選択ノードの自動センタリング＋`ContextBuilder` の N+1 解消。深さ3で4本・深さ8で9本 → どちらも2本）／7-2（`content` を10,000文字に制限・チャットに1分1回＋1日50回のレート制限・401 を `client.ts` で捕まえて `/login`）** 完了。**バックエンド全68件緑**＋ブラウザ実機検証済み。設計判断は `api/README.md`。次は発展課題（C案: AIが話題転換を検知して枝を提案）。具体タスクは [CHECKLIST.md](CHECKLIST.md)。
 
 ---
 
 ## 注意点
 
 - AI利用は従量課金（APIキーが必要）。キーはサーバー側で管理しフロントに出さない。
-- マインドマップが深くなると重なりやすい → レイアウト計算/pan-zoom 前提。
+- ~~マインドマップが深くなると重なりやすい → レイアウト計算/pan-zoom 前提。~~ → Step6-4 で解消（自前のレイアウト計算＋ @xyflow/react の pan/zoom・初期フィット）。
 - 自己参照ツリーの取得で N+1 が起きやすい → eager load。
 - **PHP 8.4 必須**（Composer が `>= 8.4.1` を要求）。`php` は 8.2 に解決されて artisan が落ちるため、`/opt/homebrew/opt/php@8.4/bin/php` を使う。
 - テストは SQLite `:memory:` で走る（`phpunit.xml`）。開発DB `nest`（MySQL）は汚れない。

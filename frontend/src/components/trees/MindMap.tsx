@@ -1,95 +1,125 @@
-import { useStore } from "../../store";
-import type { TreeNode } from "../../data";
+import { useMemo } from "react";
+import {
+  Controls,
+  ReactFlow,
+  type Edge,
+  type NodeMouseHandler,
+} from "@xyflow/react";
+import { useNodePath, useNodes } from "../../api/queries";
+import { useSelection } from "../../selection/SelectionContext";
+import { layoutTree, nodeLabel, rootOf } from "../../tree";
+import { CenterOnSelection } from "./CenterOnSelection";
+import { PillNode, type PillNodeType } from "./PillNode";
 
-type Pos = { node: TreeNode; x: number; y: number; depth: number };
+/** Pill geometry, shared by the layout maths and the CSS. */
+const NODE_WIDTH = 156;
+const NODE_HEIGHT = 34;
+const LAYOUT = { xStep: 188, yStep: 56, nodeHeight: NODE_HEIGHT };
 
-/** 案6：横方向のマインドマップ（中心テーマから枝が曲線で広がる）。 */
-export function MindMap({ large = false }: { large?: boolean }) {
-  const { selectedTreeId, selectedNodeId, rootOf, childrenOf, pathTo, selectNode } =
-    useStore();
-  const root = rootOf(selectedTreeId);
-  if (!root) return null;
+/** Registered once outside the component so React Flow never re-registers. */
+const nodeTypes = { pill: PillNode };
 
-  const xStep = large ? 230 : 188;
-  const yStep = large ? 66 : 56;
-  const padX = 16;
-  const padY = 28;
-  const pill = large ? { w: 180, h: 40 } : { w: 156, h: 34 };
+/**
+ * 案6：横方向のマインドマップ（中心テーマから枝が曲線で広がる）。
+ *
+ * React Flow gives it a real canvas — drag to pan, wheel to zoom, and the
+ * whole tree is fitted on open — so a deep tree no longer runs off the edge
+ * of the 380px pane the way the plain scrolling SVG did.
+ */
+export function MindMap() {
+  const { selectedProjectId, selectedNodeId, selectNode } = useSelection();
+  const { data: nodes, isPending, isError } = useNodes(selectedProjectId);
+  // Same query the breadcrumb uses — React Query serves both from one request.
+  const { data: path } = useNodePath(selectedNodeId);
 
-  let slot = 0;
-  const yOf = new Map<string, number>();
-  const assign = (n: TreeNode): number => {
-    const ch = childrenOf(n.id);
-    if (ch.length === 0) {
-      yOf.set(n.id, slot++);
-      return yOf.get(n.id)!;
-    }
-    const ys = ch.map(assign);
-    const y = (ys[0] + ys[ys.length - 1]) / 2;
-    yOf.set(n.id, y);
-    return y;
+  const all = useMemo(() => nodes ?? [], [nodes]);
+  const root = rootOf(all);
+  const pathIds = useMemo(
+    () => new Set((path ?? []).map((node) => node.id)),
+    [path],
+  );
+
+  const flowNodes = useMemo<PillNodeType[]>(() => {
+    if (!root) return [];
+    return layoutTree(all, root, LAYOUT).map(({ node, x, y, depth }) => ({
+      id: String(node.id),
+      type: "pill" as const,
+      position: { x, y },
+      // React Flow needs the size up front to fit the view before measuring.
+      width: NODE_WIDTH,
+      height: NODE_HEIGHT,
+      data: {
+        label: nodeLabel(node),
+        isRoot: depth === 0,
+        isCurrent: node.id === selectedNodeId,
+        onPath: pathIds.has(node.id),
+      },
+    }));
+  }, [all, root, selectedNodeId, pathIds]);
+
+  const flowEdges = useMemo<Edge[]>(
+    () =>
+      all
+        .filter((node) => node.parent_id !== null)
+        .map((node) => ({
+          id: `e${node.parent_id}-${node.id}`,
+          source: String(node.parent_id),
+          target: String(node.id),
+          // Both ends on the highlighted path means the edge is on it too.
+          className:
+            pathIds.has(node.parent_id!) && pathIds.has(node.id)
+              ? "on-path"
+              : undefined,
+        })),
+    [all, pathIds],
+  );
+
+  const handleNodeClick: NodeMouseHandler = (_event, node) => {
+    selectNode(Number(node.id));
   };
-  assign(root);
-  const totalLeaves = slot;
 
-  const nodes: Pos[] = [];
-  const edges: { from: Pos; to: Pos }[] = [];
-  const place = (n: TreeNode, depth: number): Pos => {
-    const x = padX + depth * xStep;
-    const y = padY + yOf.get(n.id)! * yStep;
-    const pos: Pos = { node: n, x, y, depth };
-    nodes.push(pos);
-    childrenOf(n.id).forEach((c) => {
-      const cp = place(c, depth + 1);
-      edges.push({ from: pos, to: cp });
-    });
-    return pos;
-  };
-  place(root, 0);
-
-  const maxDepth = Math.max(...nodes.map((n) => n.depth));
-  const width = padX * 2 + maxDepth * xStep + pill.w + 20;
-  const height = padY * 2 + Math.max(totalLeaves - 1, 1) * yStep + 40;
-  const pathIds = new Set(pathTo(selectedNodeId).map((n) => n.id));
+  // A disabled query stays `isPending` forever, so rule out "nothing selected"
+  // before treating that flag as "still loading".
+  if (selectedProjectId === null) {
+    return <p className="pane-note">学習テーマを選択してください。</p>;
+  }
+  if (isPending) return <p className="pane-note">読み込み中…</p>;
+  if (isError) {
+    return <p className="pane-note error">ツリーを取得できませんでした。</p>;
+  }
+  if (!root) {
+    return <p className="pane-note">このテーマにはまだノードがありません。</p>;
+  }
 
   return (
     <div className="mm-wrap">
-      <svg width={width} height={height} className="mm-svg">
-        {edges.map((e, i) => {
-          const x1 = e.from.x + pill.w;
-          const y1 = e.from.y;
-          const x2 = e.to.x;
-          const y2 = e.to.y;
-          const mx = (x1 + x2) / 2;
-          const d = `M ${x1} ${y1} C ${mx} ${y1}, ${mx} ${y2}, ${x2} ${y2}`;
-          const on = pathIds.has(e.from.node.id) && pathIds.has(e.to.node.id);
-          return (
-            <path key={i} d={d} className={on ? "mm-edge on-path" : "mm-edge"} fill="none" />
-          );
-        })}
-        {nodes.map((p) => {
-          const isCur = p.node.id === selectedNodeId;
-          const onP = pathIds.has(p.node.id);
-          const cls =
-            "mm-pill" +
-            (p.depth === 0 ? " root" : "") +
-            (isCur ? " current" : onP ? " on-path" : "");
-          return (
-            <foreignObject
-              key={p.node.id}
-              x={p.x}
-              y={p.y - pill.h / 2}
-              width={pill.w}
-              height={pill.h}
-            >
-              <div className={cls} onClick={() => selectNode(p.node.id)} title={p.node.title}>
-                <span className="mm-label">{p.node.title}</span>
-                {isCur && <span className="mm-here">今</span>}
-              </div>
-            </foreignObject>
-          );
-        })}
-      </svg>
+      <ReactFlow
+        // Remount per theme so the new tree gets fitted. Adding a branch keeps
+        // the same key, which leaves the viewport the user panned to alone.
+        key={selectedProjectId}
+        nodes={flowNodes}
+        edges={flowEdges}
+        nodeTypes={nodeTypes}
+        onNodeClick={handleNodeClick}
+        fitView
+        // Cap the initial fit at 1:1 — a one-node theme would otherwise be
+        // blown up to maxZoom just because it has room to spare.
+        fitViewOptions={{ padding: 0.15, maxZoom: 1 }}
+        minZoom={0.2}
+        maxZoom={2}
+        colorMode="dark"
+        // Positions are derived from server data, not something the user
+        // edits, so there is no local node state to keep in sync.
+        nodesDraggable={false}
+        nodesConnectable={false}
+        elementsSelectable={false}
+      >
+        <Controls showInteractive={false} />
+        <CenterOnSelection
+          nodeId={selectedNodeId}
+          nodeCount={flowNodes.length}
+        />
+      </ReactFlow>
     </div>
   );
 }

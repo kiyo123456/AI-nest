@@ -4,7 +4,7 @@ import { ApiValidationError } from "../api/client";
 import { useAuth } from "../auth/AuthContext";
 
 export function LoginPage() {
-  const { login } = useAuth();
+  const { login, sessionExpired } = useAuth();
   const navigate = useNavigate();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -39,6 +39,13 @@ export function LoginPage() {
         <h1 className="auth-title">思考の樹形図</h1>
         <p className="auth-lead">ログインして学習の樹を続けましょう。</p>
 
+        {/* Explains an unasked-for redirect: without it, being thrown back
+            here mid-conversation just looks like the app broke. */}
+        {sessionExpired && !formError && (
+          <p className="auth-alert">
+            セッションの有効期限が切れました。もう一度ログインしてください。
+          </p>
+        )}
         {formError && <p className="auth-alert">{formError}</p>}
 
         <label className="auth-field">

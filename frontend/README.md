@@ -33,19 +33,42 @@ npm run dev                                        # → http://localhost:5173
 ```
 src/
   api/client.ts      Sanctum SPA cookie 認証の作法を集約した fetch ラッパ
+  api/queries.ts     TanStack Query のフック（projects / nodes / messages / path）
   api/types.ts       バックエンド Resource に対応する型
   auth/AuthContext   認証状態（loading / authenticated / guest）と login/register/logout
   auth/guards.tsx    RequireAuth / RequireGuest（ルートガード）
+  selection/         今どのテーマ・どのノードを見ているか（クライアント状態）
+  tree.ts            フラットなノード配列から木を組み立てるヘルパ
   pages/             LoginPage / RegisterPage / MainPage
-  layouts.tsx        案1〜6。**採用は Layout6**（左テーマ／中央チャット／右マインドマップ）
-  store.tsx          プロトタイプ由来のインメモリ store（※実データ接続は次スライス）
-  components/        ChatPanel / ThemeSidebar / trees/*
+  layouts.tsx        Layout6（採用案：左テーマ／中央チャット／右マインドマップ）
+  components/        ChatPanel / ThemeSidebar / trees/MindMap
 ```
 
-## 現在の状態（Step6 スライス1 時点）
+**状態の使い分け**: サーバーが持つデータ（テーマ・ノード・発話）は TanStack Query が
+キャッシュし、UI の関心事（選択中のテーマ／ノード）は `selection/` の Context が持つ。
+比較検討した案1〜5とその他のツリー表現は `prototype/` に残してある。
+
+## 現在の状態（Step6 スライス3 時点）
 
 - ✅ サインアップ / ログイン / ログアウト / リロードでのセッション復元
-- ⏳ メイン画面はまだ**プロトタイプのダミーデータ**で動いている（実 API 接続は次スライス）
+- ✅ メイン画面が実 API で動く（テーマ一覧・ツリー・発話・パンくず・切替）
+- ✅ **書き込み操作**: テーマ作成（根ノードも自動生成）／チャット送信（楽観的更新）／
+  AI回答から「ここから枝を作る」
+- ⏳ マインドマップの pan/zoom（@xyflow/react への置換）は次スライス
+
+**チャット送信には API 側の `ANTHROPIC_API_KEY` が必要**（従量課金）。未設定の場合は
+502 エラーが表示されるが、**送った発話はサーバーに保存されたまま残る**（学習履歴を
+失わない設計）。
+
+### 動作確認用のデータ
+
+API 側でシーダーを流すと、デモ用アカウントと分岐のある学習ツリーが入る。
+
+```bash
+cd ../api && /opt/homebrew/opt/php@8.4/bin/php artisan db:seed
+```
+
+ログイン: `demo@example.com` / `password`（既存アカウントは削除されない）
 
 ## 既知の事項
 

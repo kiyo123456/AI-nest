@@ -59,8 +59,10 @@ export function Layout6() {
               <span>思考の樹形図（マインドマップ・全画面）</span>
               <button onClick={() => setFull(false)}>閉じる ✕</button>
             </div>
+            {/* No `large` variant any more: zoom normalises the scale, so a
+                bigger pixel size would just be undone by fitView. */}
             <div className="ft-canvas">
-              <MindMap large />
+              <MindMap />
             </div>
           </div>
         </div>

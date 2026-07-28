@@ -535,22 +535,46 @@ body {
   display: flex;
   flex-direction: column;
 }
+/* React Flow measures its container, so it needs a definite width/height. */
 .mm-wrap {
+  width: 100%;
   height: 100%;
-  overflow: auto;
+  /* Panning replaces scrolling; a scrollbar here would fight the canvas. */
+  overflow: hidden;
   background: var(--bg);
   border-radius: 10px;
 }
-.mm-svg {
-  display: block;
+.mm-wrap .react-flow__attribution {
+  background: transparent;
+  font-size: 9px;
 }
-.mm-edge {
+.mm-wrap .react-flow__attribution a {
+  color: var(--text-dim);
+  opacity: 0.5;
+}
+/* Edges are a <path> inside a <g>, so the class lands on the group. */
+.react-flow__edge .react-flow__edge-path {
   stroke: var(--border);
   stroke-width: 2;
 }
-.mm-edge.on-path {
+.react-flow__edge.on-path .react-flow__edge-path {
   stroke: var(--accent);
   stroke-width: 3;
+}
+/* Handles only anchor the edges; they are never dragged. */
+.react-flow__handle {
+  opacity: 0;
+  pointer-events: none;
+}
+/* Zoom buttons, matched to the existing palette. */
+.react-flow__controls-button {
+  background: var(--panel-2);
+  border-bottom: 1px solid var(--border);
+  fill: var(--text-dim);
+}
+.react-flow__controls-button:hover {
+  background: var(--border);
+  fill: var(--text);
 }
 .mm-pill {
   display: flex;

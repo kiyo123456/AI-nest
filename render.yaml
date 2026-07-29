@@ -6,10 +6,14 @@
 #   ファーストパーティのまま扱われる。フロントと API を別ドメインで直接叩くと
 #   Cookie がサードパーティ扱いになり、Safari 等ではログインできない。
 #
-# ⚠️ 初回デプロイ後にやること:
-#   API サービスの実 URL と Static Site の実 URL が確定したら、下の
-#   `<<API_URL>>` / `<<WEB_URL>>` を実際の URL に置き換えて push し直す。
+# ⚠️ URL について:
+#   Render のサービス URL は `https://<name>.onrender.com`。名前が既に使われて
+#   いると Render が接尾辞を付けるので、初回デプロイ後にダッシュボードで実 URL を
+#   確認し、下の 5 箇所が合っているか必ず見比べること。
 #   （rewrite の destination には Render の「外部 URL」が必要。内部ドメインは 502 になる）
+#
+#   fromService は Web / Private Service しか参照できず、Static Site には使えない。
+#   そのためフロントの URL は下でリテラル指定している。
 
 services:
   # ---------------------------------------------------------------- API ------
@@ -17,7 +21,7 @@ services:
     name: ai-nest-api
     runtime: docker
     plan: free
-    region: singapore
+    region: ohio  # Neon(us-east-2) と同じ地域に揃える。離すと毎クエリ大陸間往復になる
     branch: main
     rootDir: api
     dockerfilePath: ./Dockerfile
@@ -36,7 +40,7 @@ services:
       - key: APP_KEY
         sync: false # ダッシュボードで手入力（`php artisan key:generate --show`）
       - key: APP_URL
-        fromService: { type: web, name: ai-nest-web, property: hostport }
+        value: https://ai-nest-web.onrender.com
       - key: APP_LOCALE
         value: ja
       - key: APP_FALLBACK_LOCALE
@@ -70,11 +74,13 @@ services:
       - key: QUEUE_CONNECTION
         value: sync
 
-      # Sanctum / CORS。Referer・Origin は Static Site のホストになる。
+      # Sanctum は Host ではなく Referer / Origin ヘッダを見て stateful 判定する。
+      # プロキシ経由でもそれらは Static Site のホストになるので、ここに入れるのは
+      # Static Site のホスト（API 自身ではない）。
       - key: SANCTUM_STATEFUL_DOMAINS
-        fromService: { type: web, name: ai-nest-web, property: host }
+        value: ai-nest-web.onrender.com
       - key: FRONTEND_URL
-        fromService: { type: web, name: ai-nest-web, property: hostport }
+        value: https://ai-nest-web.onrender.com
 
       - key: ANTHROPIC_API_KEY
         sync: false
@@ -102,15 +108,15 @@ services:
     envVars:
       # 自分自身のオリジン。下の rewrite で同一オリジンのまま API に届く。
       - key: VITE_API_URL
-        value: <<WEB_URL>>
+        value: https://ai-nest-web.onrender.com
     routes:
       # 順序が重要。API を先に、SPA フォールバックを最後に置く。
       - type: rewrite
         source: /api/*
-        destination: <<API_URL>>/api/*
+        destination: https://ai-nest-api.onrender.com/api/*
       - type: rewrite
         source: /sanctum/*
-        destination: <<API_URL>>/sanctum/*
+        destination: https://ai-nest-api.onrender.com/sanctum/*
       # react-router 用。深いパスの直リロードを index.html に寄せる。
       - type: rewrite
         source: /*

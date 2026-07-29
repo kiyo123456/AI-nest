@@ -10,6 +10,61 @@
 
 ## 設計判断ログ
 
+### Step7 スライス3: AI 回答の Markdown 描画（吹き出しをやめて「読み物」にする）
+
+**採用**: `react-markdown` + `remark-gfm` + `rehype-highlight`。**AI 回答は吹き出しを外して全幅**、ユーザー発話は吹き出しのまま。生 HTML は無効のまま維持。
+
+#### ① 発覚した状態 — 「Markdown が読めない」だけではなかった
+
+`ChatPanel` は `{message.content}` を素のテキストとして吹き出しに入れていた。Claude は Markdown で返すので `##` や `**` が記号のまま出ていたが、それ以上に問題だったのは **`.bubble` に `white-space` 指定が無く改行そのものが潰れていた**こと。長い回答が一続きの塊になり、**「AI の回答を読んで、逸れたと感じたら枝を作る」という中核体験が成立していなかった**。Phase1 の価値に直接効く欠陥だったので、見た目の改善ではなく機能の修復として扱った。
+
+#### ② ライブラリ選定 — 自作パーサを捨てた理由
+
+- **`react-markdown`（9系）を採用**。見出し・太字・リスト程度なら自作でも書けるが、**表・ネスト・コードブロックで必ず破綻する**。学習アプリの回答に表とコードは日常的に出るので、ここは車輪の再発明にしかならない。
+- **`marked` + `DOMPurify` は却下**。HTML 文字列を作って `dangerouslySetInnerHTML` で挿す構成は、**サニタイズを正しく通す責任を自分で負う**ことになる。`react-markdown` は既定で生 HTML を無視する（`rehype-raw` を入れない限り DOM にならない）ので、**何もしないことが安全側**になる。これが決め手。
+- **`remark-gfm` は必須**。無しだと GFM の表がただの段落として落ちる。
+- **描画のカスタムは2点だけ**（`components`）。表を `.md-table-scroll` で包む（狭い中央カラムでのはみ出し対策）、`a` に `target="_blank" rel="noreferrer"`（**AI 出力に混ざる外部リンク**なので参照元を渡さない）。プラグイン配列は**モジュール定数**にしてある——render ごとに新しい配列を渡すとプラグイン鎖が作り直される。
+
+#### ③ 依存追加の責任 — ハイライトは Markdown 本体より重い
+
+実測（`npm run build`、gzip）:
+
+| | JS | gzip | 導入前比 |
+|---|---|---|---|
+| 6-4 時点 | 426 KB | 137 KB | — |
+| ＋ react-markdown / remark-gfm | 586 KB | 186 KB | +49 KB |
+| ＋ rehype-highlight / highlight.js | **764 KB** | **240 KB** | **+103 KB** |
+
+- **シンタックスハイライトの方が Markdown 本体より高い**（+54 KB gzip vs +49 KB）。理由は `lowlight` の `common` = 約37言語分の文法が入るため。
+- **⚠️ `rehype-highlight` の `languages` オプションでは減らせない**: `lib/index.js` が `import {common} from 'lowlight'` を**トップレベルで静的に** import しているため、自前の言語セットを渡しても `common` はバンドルに残る。**本当に削るならプラグインを使わず `createLowlight()` で自作する**しかない。今回は測ってから「この規模の個人開発では割に合わない」と判断して見送り、事実として記録する。
+- 直接依存は4つだが**実際は 98 → 201 パッケージ**（unified / remark / rehype / micromark 系）。`npm audit` は**導入前と同じ 2 high で新規ゼロ**。
+
+#### ④ CSS の落とし穴 — flex の自動最小サイズで「ページが横に伸びる」
+
+`overflow-x: auto` を付けただけではコードブロックは自分の中でスクロールしない。**flex item / grid track の自動最小サイズが content の min-content になる**ため、長いコード行がその外側を押し広げる。実測で犯人を切り分けた（`.markdown pre` を `display:none` にすると `documentElement.scrollWidth` が 1402 → 855）。3箇所の `min-width: 0` が必要だった:
+
+- **`.layout6 .center6`** — grid の `1fr` は `minmax(auto, 1fr)`。既にあった `min-height: 0`（縦スクロールのため）と**同じ理屈の横版**。これを入れるとページの横スクロール自体が消える（幅820pxで 1402 → 820）。
+- **`.msg`** — flex item なので、中の表やコードブロックの min-content まで広がる。
+- **`.markdown` ＋ `align-self: stretch`** — 枝ボタンを全幅に伸ばさないため `.msg.assistant` に `align-items: flex-start` を入れており、その結果**本文も shrink-to-fit になって `fit-content = max(min-content, ...)` で 769px に膨らんでいた**。本文だけ明示的に stretch させる。
+
+#### ⑤ highlight.js のテーマが二重のスクロールコンテナを作っていた
+
+配布テーマ（`atom-one-dark.css`）は `.hljs` 自身に `display: block; overflow-x: auto; padding; background` を載せてくる。つまり**`code` 要素がスクロールコンテナになり、自前の `pre` の枠と二重になる**（`pre.scrollWidth === clientWidth` なのに横に切れている、という一見矛盾した観測になった）。`.markdown pre code` で `background` / `padding` / `overflow-x` を戻し、**枠と背景は自前・トークンの色だけテーマに任せる**形に統一した。**言語指定のないコードブロックには `.hljs` が付かない**ので、揃えないと同じ画面で挙動が変わってしまう。
+
+#### ⑥ 描画するのはフロントだが、プロンプトも1行だけ足した
+
+`SYSTEM_PROMPT` に「Markdown で構造化してください」を追加。**「内容量に見合う範囲で」「短い答えを無理に飾る必要はありません」を明記**したのが要点で、これが無いと一行で済む質問にも見出しが付く。`NodeChatTest` は `AnthropicClient` をモックしているので、プロンプト変更で落ちるテストは無い（＝**この1行はテストに守られていない**ことも記録に留める）。
+
+#### ⑦ ユーザー発話は Markdown にしない
+
+自分が打った `*` は文字として出したい。改行だけ `white-space: pre-wrap` で残す。「考え中…」の吹き出しも assistant 側だが**文書ではなく一時的な状態表示**なので吹き出しのまま残し、本文と見分けが付くようにした。
+
+**検証（課金ゼロ・AI への実送信なし）**: `artisan test` **68件緑**、`pint` 通過、`npm run build` 通過。`tinker` で表・コード・引用・ネストリスト・長い識別子を含む発話を dev DB に1件入れて実機確認（確認後に削除済み）。①見出し・太字・リスト・表・引用・コードが体裁として出る／PHP がトークン単位で色付く ②AI 回答が全幅・ユーザー発話が右吹き出しで**3行が3行のまま**表示（`pre-wrap`、高さ87px）③**枝ボタンが全幅に伸びていない**（133px）④幅820pxまで縮めても**ページも `.messages` も横にはみ出さず**（overflow 0）、`pre` が自分の中でスクロールする（`scrollWidth` 753 vs `clientWidth` 185、`scrollLeft` が動く）／表も `.md-table-scroll` 内でスクロール ⑤枝作成→ツリー更新→パンくず3階層→新ノードへ移動が従来どおり ⑥`Invalid hook call` を含むコンソールエラーなし。
+
+**⚠️ 依存追加時の手順**（6-4 の教訓の再現防止）: dev サーバを止めてから `npm install` し、`node_modules/.vite` を消して起動した。起動中に足すと Vite の依存最適化が走り直して React が二重読み込みになる。
+
+**残した既知の癖**: GFM の autolink は、URL の直後に空白なしで全角文字が続くと**その全角文字までリンクに含める**（検証データで `...testing-wrap）でもペインは壊れません。` が href に入った）。remark-gfm の仕様の範囲で、実際の AI 出力ではまず起きないため触っていない。
+
 ### Step7 スライス2: バリデーションとエラーハンドリングの穴を塞ぐ
 
 **採用**: `content` を 10,000文字に制限、チャットに**1分1回＋1日50回**のレート制限、401 を `client.ts` で捕まえて理由を出してから `/login`。

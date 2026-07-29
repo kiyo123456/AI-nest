@@ -56,6 +56,7 @@ graph LR
 | フロント | React 18 + TypeScript + Vite | SPA として画面遷移とキャッシュを自前で持つ構成にするため |
 | サーバー状態 | TanStack Query | **サーバーの真実**（キャッシュ）と**UIの関心事**（今どこを見ているか）を分離できる |
 | マインドマップ | @xyflow/react | pan/zoom・初期フィット・座標変換が実績のある実装で手に入る。**レイアウト計算は自前のまま**残した |
+| AI 回答の描画 | react-markdown（+ remark-gfm / rehype-highlight） | 既定で生 HTML を DOM にしないので、**何もしないことが安全側**になる。サニタイズの責任を自分で負う構成を避けた |
 | バックエンド | Laravel 13 / PHP 8.4 | 自作 REST API・認可・DB モデリングを一通り実践するため |
 | 認証 | Sanctum SPA cookie セッション | HttpOnly Cookie で XSS 耐性。CORS・CSRF・SameSite まで含めて理解する狙い |
 | DB | MySQL 8 | 再帰CTE が使える。ツリーは隣接リストで保持 |

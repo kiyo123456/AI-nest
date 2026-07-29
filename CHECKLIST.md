@@ -86,7 +86,7 @@
 
 ## 7. 仕上げ（非機能・任意）
 
-> スライスに分割。**7-1 完了**。
+> スライスに分割。**7-3 完了**。
 
 **7-1 センタリング＋N+1** ✅ 完了 2026-07-28
 - [x] 選択ノードを自動で画面に入れる（**画面外のときだけ**寄せる／倍率は変えない）✅ `CenterOnSelection`
@@ -98,7 +98,14 @@
 - [x] セッション切れの 401 をフロントで捕まえて `/login` へ ✅ `client.ts` に集約。**起動時の `/me` 401 で誤発火しない**ようガード
 - [x] `config/cors.php` の `exposed_headers` に `Retry-After`（CORS が隠していて待ち秒数を出せなかった）✅
 
-**7-3 以降**
+**7-3 AI 回答の Markdown 描画** ✅ 完了 2026-07-28
+- [x] AI 回答を Markdown として描画（`react-markdown` + `remark-gfm` + `rehype-highlight`）✅ 生 HTML は無効のまま
+- [x] **改行が潰れていた**のを直す（`.bubble` に `white-space: pre-wrap`）✅ Markdown 以前の欠陥
+- [x] AI 回答は吹き出しをやめて全幅の「読み物」に、ユーザー発話は吹き出しのまま ✅ Claude/ChatGPT と同じ組み方
+- [x] コードブロック・表がペインを押し広げないよう `min-width: 0` 3箇所 ＋ 内側スクロール ✅
+- [x] `SYSTEM_PROMPT` に「Markdown で構造化」を1行（**内容量に見合う範囲で**を明記）✅
+
+**7-4 以降**
 - [x] README に設計判断（隣接リスト採用理由・ハイブリッド分岐など）を記述＝ポートフォリオ用 ✅ `api/README.md` の設計判断ログとして各スライスで継続記録
 - [ ] (発展) C案: AIが話題転換を検知して枝を提案
 
@@ -215,4 +222,18 @@
 - **分かったこと（記録）**: throttle はミドルウェアなので FormRequest より先に走り、**422 でもレート制限のカウントは進む**。AI は呼ばれないので課金はゼロ。この性質を使い、**422 でカウントを進めてから2通目を送ることで、AI を一度も呼ばずに 429 を再現**して検証した。
 - **⚠️ 検証中の事故**: 429 の確認中、直前の試行から1分以上経って分単位の窓がリセットされ、**意図せず AI に1回実送信した**（短い1往復分の課金）。`TypeScript の型` ノードに発話 id 23・24 が残っている。以後は上記の課金ゼロの方法に切り替えた。
 - **検証**: `artisan test` **68件緑**、`pint` 通過、`npm run build` 通過。ブラウザ実機で 422／429／保存されないこと／セッション切れ→`/login`＋理由表示／初回訪問では出ない／ログインし直して復帰／コンソールエラーなし。
+- **次にやること:** 発展課題（C案: AIが話題転換を検知して枝を提案）、または残りの仕上げ。
+
+### 2026-07-28 セーブポイント（Step7-3 AI 回答の Markdown 描画 完了）
+- **技術選定（本人）**: ①**`react-markdown` + `remark-gfm`**（vs 自作パーサ / `marked`+`DOMPurify`）②**AI 回答は吹き出しを外して全幅**、ユーザー発話は吹き出しのまま ③ハイライトは **`rehype-highlight`**（重さを実測してから採用）④生 HTML は**無効のまま**。根拠は `api/README.md` 設計判断ログ。
+- **このスライスの肝**: 「Markdown が記号のまま出る」より先に、**`.bubble` に `white-space` が無く改行そのものが潰れていた**。長い回答が一続きの塊になり、**「回答を読んで、逸れたと感じたら枝を作る」という中核体験が成立していなかった**。見た目の改善ではなく Phase1 の価値の修復として扱った。
+- **選定の決め手（安全側の設計）**: `marked`+`DOMPurify` は HTML 文字列を `dangerouslySetInnerHTML` で挿すので**サニタイズの責任を自分で負う**。`react-markdown` は `rehype-raw` を入れない限り生 HTML を DOM にしないので、**何もしないことが安全側**になる。AI の出力をそのまま描画する画面なので、この差を優先した。
+- **⚠️ 依存追加の責任（実測）**: gzip で 137KB → 186KB（react-markdown）→ **240KB**（＋ハイライト）。**シンタックスハイライトの方が Markdown 本体より高い**（+54KB vs +49KB／`lowlight` の約37言語分）。しかも **`rehype-highlight` の `languages` オプションでは削れない**——`import {common} from 'lowlight'` が静的 import なので、減らすならプラグインを捨てて `createLowlight()` で自作するしかない。**測ってから「割に合わない」と判断して見送り、事実として記録**。パッケージは 98 → **201**、`npm audit` は導入前と同じ 2 high で新規ゼロ。
+- **見つけて直したもの2件（どちらも CSS の落とし穴）**: ①**`overflow-x: auto` だけではコードブロックは自分の中でスクロールしない**。flex/grid の自動最小サイズが content の min-content になるため、長いコード行が外側を押し広げてページごと横に伸びた（幅820pxで `documentElement.scrollWidth` が 1402）。`min-width: 0` を **grid の中央カラム／`.msg`／`.markdown`** の3箇所に入れて解決（既にあった `min-height: 0` の**横版**）。②**highlight.js の配布テーマが `.hljs` 自身をスクロールコンテナにしていた**ため `code` と `pre` で二重になり、「`pre.scrollWidth === clientWidth` なのに横に切れている」という矛盾した観測になった。`pre code` 側で戻して **枠と背景は自前・トークンの色だけテーマに任せる**形に統一。
+- **嵌まりどころ ⚠️**: 枝ボタンを全幅に伸ばさないため `.msg.assistant` に `align-items: flex-start` を入れたら、**本文も shrink-to-fit になって表の min-content 幅（769px）に膨らんだ**。`fit-content = max(min-content, available)` なので `min-width: 0` だけでは効かず、本文だけ `align-self: stretch` で明示的に伸ばす必要があった。
+- **実装**: `components/Markdown.tsx`（新規・プラグインは**モジュール定数**／表は横スクロール箱で包む／`a` に `target="_blank" rel="noreferrer"`）、`ChatPanel` は role で分岐（**ユーザー発話は Markdown にしない**——自分が打った `*` は文字として出したい）、`styles.css` に `.markdown` タイポグラフィ、`main.tsx` でテーマ CSS、`AnthropicClient::SYSTEM_PROMPT` に1行。
+- **プロンプトの1行**: 「**内容量に見合う範囲で**」「短い答えを無理に飾る必要はありません」を明記。これが無いと一行で済む質問にも見出しが付く。なお `NodeChatTest` は `AnthropicClient` をモックしているので、**この1行はテストに守られていない**（記録に留める）。
+- **検証（課金ゼロ・実送信なし）**: `artisan test` **68件緑**、`pint` 通過、`npm run build` 通過。`tinker` で表・コード・引用・ネストリスト・長い識別子を含む発話を dev DB に1件入れて実機確認（**確認後に削除済み**）。見出し・太字・リスト・表・引用が体裁として出る／PHP がトークン単位で色付く／**3行の発話が3行のまま**（`pre-wrap`・高さ87px）／**枝ボタンは133px で全幅に伸びない**／幅820pxまで縮めても**ページも `.messages` も横にはみ出さず**（overflow 0）`pre` が自分の中でスクロール（`scrollWidth` 753 vs `clientWidth` 185）／枝作成→ツリー更新→パンくず3階層→新ノードへ移動が従来どおり／`Invalid hook call` を含むコンソールエラーなし。
+- **6-4 の教訓を再現させなかった**: dev サーバを止めてから `npm install` し、`node_modules/.vite` を消して起動（起動中に足すと React が二重読み込みになる）。
+- **残した既知の癖**: GFM の autolink は URL 直後に空白なしで全角文字が続くと**その全角文字までリンクに含める**。remark-gfm の仕様の範囲で、実際の AI 出力ではまず起きないため触っていない。
 - **次にやること:** 発展課題（C案: AIが話題転換を検知して枝を提案）、または残りの仕上げ。

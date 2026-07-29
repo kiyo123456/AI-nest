@@ -38,7 +38,7 @@ return [
     // The API key stays server-side and is never exposed to the SPA.
     'anthropic' => [
         'key' => env('ANTHROPIC_API_KEY'),
-        'model' => env('ANTHROPIC_MODEL', 'claude-opus-5'),
+        'model' => env('ANTHROPIC_MODEL', 'claude-haiku-4-5'),
         'max_tokens' => (int) env('ANTHROPIC_MAX_TOKENS', 4096),
 
         /*

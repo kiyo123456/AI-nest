@@ -13,6 +13,12 @@ return Application::configure(basePath: dirname(__DIR__))
         health: '/up',
     )
     ->withMiddleware(function (Middleware $middleware): void {
+        // In production TLS terminates at Render's load balancer, so the app
+        // itself only ever sees plain HTTP. Without trusting the forwarding
+        // headers, `$request->secure()` is false and Laravel issues http:// URLs
+        // and drops the Secure flag on cookies.
+        $middleware->trustProxies(at: '*');
+
         // SPA cookie auth: requests from SANCTUM_STATEFUL_DOMAINS carry the
         // session cookie + CSRF token, so they authenticate via the web guard.
         $middleware->statefulApi();

@@ -73,8 +73,10 @@ class Node extends Model
      * The ancestor chain from the root down to (and including) this node.
      *
      * Walks `parent_id` up to the root in a single recursive-CTE query
-     * (standard SQL; works on MySQL 8 and SQLite). The result is ordered
-     * root-first so it can drive both the AI context and the breadcrumb.
+     * (standard SQL; works on MySQL 8, PostgreSQL and SQLite — which is what
+     * let production move to Postgres without touching this query). The result
+     * is ordered root-first so it can drive both the AI context and the
+     * breadcrumb.
      *
      * @return Collection<int, Node>
      */

@@ -6,9 +6,68 @@
 ## 実行前提
 
 - **PHP 8.4 必須**。`php` は 8.2 に解決され Composer が拒否するため、artisan は必ず `/opt/homebrew/opt/php@8.4/bin/php artisan ...` で実行する。
-- 開発DBは MySQL `nest`。テストは SQLite `:memory:`（`phpunit.xml`）＋ `SESSION_DRIVER=array` なので開発DBは汚れない。
+- 開発DBは MySQL `nest`。テストは SQLite `:memory:`（`phpunit.xml`）＋ `SESSION_DRIVER=array` なので開発DBは汚れない。**本番（Render）は PostgreSQL** — 3種のDBで同じマイグレーションとクエリが動いている。
 
 ## 設計判断ログ
+
+### Step8: Render へのデプロイ（Docker 化・Postgres 移行・同一オリジン化）
+
+**採用**: API を Docker の Web Service、SPA を Static Site として Render に置き、**Static Site の rewrite で `/api/*` `/sanctum/*` を API に転送**して同一オリジンに見せる。DB は外部の Neon PostgreSQL。定義は [`render.yaml`](../render.yaml) の Blueprint 一枚に集約。
+
+#### ① Docker は選択ではなく前提だった
+
+Render のネイティブランタイムに **PHP は無い**（Node / Python / Ruby / Go / Rust / Elixir のみ）。したがって Dockerfile は必須。土台に `serversideup/php:8.4-fpm-nginx` を採用した。自前で nginx + php-fpm + supervisor を組む案と比べて、**保守する設定ファイルがゼロになる**のが理由。`pdo_pgsql` / `opcache` が同梱で、Laravel 向けの起動処理（migrate・各種 cache）が env で制御できる。
+
+- **`composer install` は vendor ステージに分離**。`composer.json` / `composer.lock` だけを先に COPY するので、アプリのコードだけ触ったビルドでは依存解決がキャッシュヒットする。
+- **`config:cache` をビルド時に走らせてはいけない**。ビルド時にはまだ `APP_KEY` も `DB_URL` も無いので、**空の env が焼き込まれた設定キャッシュが本番に載る**。`AUTORUN_LARAVEL_CONFIG_CACHE=true` で**起動時**に回すのが正しい。ここは一度踏むと原因が分かりにくい類の罠なので Dockerfile にコメントとして残した。
+- **公開ポートは 8080**。イメージが非 root（`www-data`）で動くので 80 は使えない。Render は既定で 10000 を見るため、env に `PORT=8080` を置いてルーティング先を明示する。
+
+#### ② サードパーティ Cookie問題 — 「別オリジンのまま」が本番では通らない
+
+開発では `5173 → 8000` のクロスオリジンを**あえて**維持してきた（Step6-1 の判断）。しかし本番で同じことをすると、フロントとAPIが別ドメインになり **Sanctum のセッション Cookie がサードパーティ Cookie になる**。Safari の ITP はこれを既定でブロックするので、**環境によってログインが成立しない**。
+
+対処は2案あった。
+
+| 案 | 内容 | 判断 |
+|---|---|---|
+| A | `SESSION_SAME_SITE=none` + `Secure` で押し通す | **却下**。仕様上は正しいが、ブロックする側のブラウザでは何をしても通らない。「動く環境と動かない環境がある」状態をポートフォリオに置きたくない |
+| B | **Static Site の rewrite で API を同一オリジンに見せる** | **採用**。ブラウザから見て同一オリジンなので Cookie はファーストパーティ、CORS プリフライトも発生しない |
+
+**B にしてもアプリのコードは1行も変わらない**のが良かった点。`client.ts` の `credentials: "include"` と CSRF フローはそのまま、`VITE_API_URL` に自分自身のオリジンを入れるだけで本番に載る。
+
+**Sanctum 側の注意**: `EnsureFrontendRequestsAreStateful` は Host ではなく **Referer / Origin ヘッダ**を見て stateful 判定する。プロキシ経由でもこれらは Static Site のホストになるので、`SANCTUM_STATEFUL_DOMAINS` には **Static Site のホスト**を入れる（API 自身ではない）。`render.yaml` の `fromService` で解決させてハードコードを避けた。
+
+**⚠️ rewrite の destination は Render の外部 URL でなければならない**。内部ドメインを指定すると 502 になる。
+
+#### ③ MySQL → PostgreSQL — 「標準SQLで書いた」が効いた
+
+Render に **MySQL のマネージド DB は無く**、無料 Postgres は**作成30日で失効**する。ポートフォリオとして常時見せる以上、30日で消える DB は選べない。→ 外部の Neon（永続無料）＋ PostgreSQL に決定。
+
+移行コストを見積もったところ、**実質ゼロだった**:
+
+- マイグレーションは全て Laravel Blueprint の記述のみで、ドライバ依存が無い（`->after()` は Postgres では無視されるだけ）
+- **`ancestorPath()` の `WITH RECURSIVE` は標準 SQL** — Step4→5 で「MySQL 固有機能ではなく標準 SQL の範囲で書く」と決めていたのがそのまま効いた。**クエリを一行も変えずに** Postgres で動いた
+- `config/database.php` の `pgsql` が `DB_URL` を読むので、接続情報は**環境変数ひとつ**で足りる
+
+**副産物**: `messages.content` が MySQL TEXT の **65,535 バイト上限から解放**された（Postgres の TEXT は無制限）。Step5 で `ANTHROPIC_MAX_TOKENS` を上げられない制約として記録していた問題が、本番に関しては消えた。
+
+#### ④ 無料プランには shell が無い — デモアカウントをどう入れるか
+
+Render Shell は有料プラン限定。つまり**デプロイ後に `artisan db:seed` を手で叩けない**。イメージが `/etc/entrypoint.d/*` を起動時に実行する仕組みを使い、`SEED_DEMO_DATA=true` のときだけシードするスクリプトを置いた。
+
+これが成立するのは **`LearningTreeSeeder` が元から冪等**だから（`User::firstOrCreate` ＋ 既にプロジェクトを持っていれば早期 return）。コンテナは再起動のたびにこれを走らせるが、2回目以降は何も足さない。**Step6-2 でシーダーを「追加的」に書いておいた判断が、ここで別の形で回収された。**
+
+#### ⑤ `/` が本番で 500 になるところだった
+
+`routes/web.php` の `/` は Laravel 標準の `welcome` ビューを返していた。このビューは `@vite(['resources/css/app.css', 'resources/js/app.js'])` を含む。**この Laravel-Vite 雛形はこのプロダクトでは使っておらず**（画面は別サービスの `frontend/`）、本番イメージにも含めていないため、アクセスすると `ViteException` になる。`/` はサービス名を返すだけの JSON に置き換えた。
+
+#### ⑥ プロキシを信頼しないと Secure Cookie が落ちる
+
+Render はロードバランサで TLS を終端するので、**アプリからは常に平文 HTTP に見える**。`trustProxies` を入れないと `$request->secure()` が false になり、Laravel が Cookie の `Secure` 属性を落とし、URL も `http://` で生成する。`bootstrap/app.php` に `$middleware->trustProxies(at: '*')` を追加した。あわせて `SESSION_SECURE_COOKIE=true` も明示している。
+
+**検証（実機・課金ゼロ）**: Docker で Postgres 16 を立て、`migrate:fresh --seed` が通ることを確認。`ancestorPath()` が**深さ4の祖先パスをルート起点の正しい順序で**返し、`ContextBuilder` が 8 メッセージを組み立てることを tinker で確認。シーダーを2回追加実行して `(projects, nodes, messages) = (2, 7, 16)` が**変化しない**ことで冪等性を確認。次に本番と同じ Dockerfile をビルドして起動し、HTTP 経由で ①`/up` 200 ②`/` が JSON ③`/sanctum/csrf-cookie` 204 + `XSRF-TOKEN` 発行 ④`/api/login` 200（＝ CSRF とセッションが production 設定で成立）⑤`/api/me`・`/api/projects` が認証済みで応答 ⑥`/api/nodes/4/path` が再帰CTEの結果を返す ⑦**未認証の `/api/projects` が 401** を確認。`artisan test` 68件緑、`pint` 通過、`npm run build` 通過。
+
+**未検証（実デプロイでしか確認できない）**: Render の rewrite が POST ボディと `Set-Cookie` を素通しすること。デプロイ後に **Safari でログインできるか**が本命のチェックになる。
 
 ### Step7 スライス3: AI 回答の Markdown 描画（吹き出しをやめて「読み物」にする）
 

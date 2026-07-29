@@ -6,9 +6,123 @@
 ## 実行前提
 
 - **PHP 8.4 必須**。`php` は 8.2 に解決され Composer が拒否するため、artisan は必ず `/opt/homebrew/opt/php@8.4/bin/php artisan ...` で実行する。
-- 開発DBは MySQL `nest`。テストは SQLite `:memory:`（`phpunit.xml`）＋ `SESSION_DRIVER=array` なので開発DBは汚れない。
+- 開発DBは MySQL `nest`。テストは SQLite `:memory:`（`phpunit.xml`）＋ `SESSION_DRIVER=array` なので開発DBは汚れない。**本番（Render）は PostgreSQL** — 3種のDBで同じマイグレーションとクエリが動いている。
 
 ## 設計判断ログ
+
+### Step8: Render へのデプロイ（Docker 化・Postgres 移行・同一オリジン化）
+
+**採用**: API を Docker の Web Service、SPA を Static Site として Render に置き、**Static Site の rewrite で `/api/*` `/sanctum/*` を API に転送**して同一オリジンに見せる。DB は外部の Neon PostgreSQL。定義は [`render.yaml`](../render.yaml) の Blueprint 一枚に集約。
+
+#### ① Docker は選択ではなく前提だった
+
+Render のネイティブランタイムに **PHP は無い**（Node / Python / Ruby / Go / Rust / Elixir のみ）。したがって Dockerfile は必須。土台に `serversideup/php:8.4-fpm-nginx` を採用した。自前で nginx + php-fpm + supervisor を組む案と比べて、**保守する設定ファイルがゼロになる**のが理由。`pdo_pgsql` / `opcache` が同梱で、Laravel 向けの起動処理（migrate・各種 cache）が env で制御できる。
+
+- **`composer install` は vendor ステージに分離**。`composer.json` / `composer.lock` だけを先に COPY するので、アプリのコードだけ触ったビルドでは依存解決がキャッシュヒットする。
+- **`config:cache` をビルド時に走らせてはいけない**。ビルド時にはまだ `APP_KEY` も `DB_URL` も無いので、**空の env が焼き込まれた設定キャッシュが本番に載る**。`AUTORUN_LARAVEL_CONFIG_CACHE=true` で**起動時**に回すのが正しい。ここは一度踏むと原因が分かりにくい類の罠なので Dockerfile にコメントとして残した。
+- **公開ポートは 8080**。イメージが非 root（`www-data`）で動くので 80 は使えない。Render は既定で 10000 を見るため、env に `PORT=8080` を置いてルーティング先を明示する。
+
+#### ② サードパーティ Cookie問題 — 「別オリジンのまま」が本番では通らない
+
+開発では `5173 → 8000` のクロスオリジンを**あえて**維持してきた（Step6-1 の判断）。しかし本番で同じことをすると、フロントとAPIが別ドメインになり **Sanctum のセッション Cookie がサードパーティ Cookie になる**。Safari の ITP はこれを既定でブロックするので、**環境によってログインが成立しない**。
+
+対処は2案あった。
+
+| 案 | 内容 | 判断 |
+|---|---|---|
+| A | `SESSION_SAME_SITE=none` + `Secure` で押し通す | **却下**。仕様上は正しいが、ブロックする側のブラウザでは何をしても通らない。「動く環境と動かない環境がある」状態をポートフォリオに置きたくない |
+| B | **Static Site の rewrite で API を同一オリジンに見せる** | **採用**。ブラウザから見て同一オリジンなので Cookie はファーストパーティ、CORS プリフライトも発生しない |
+
+**B にしてもアプリのコードは1行も変わらない**のが良かった点。`client.ts` の `credentials: "include"` と CSRF フローはそのまま、`VITE_API_URL` に自分自身のオリジンを入れるだけで本番に載る。
+
+**Sanctum 側の注意**: `EnsureFrontendRequestsAreStateful` は Host ではなく **Referer / Origin ヘッダ**を見て stateful 判定する。プロキシ経由でもこれらは Static Site のホストになるので、`SANCTUM_STATEFUL_DOMAINS` には **Static Site のホスト**を入れる（API 自身ではない）。`render.yaml` の `fromService` で解決させてハードコードを避けた。
+
+**⚠️ rewrite の destination は Render の外部 URL でなければならない**。内部ドメインを指定すると 502 になる。
+
+#### ③ MySQL → PostgreSQL — 「標準SQLで書いた」が効いた
+
+Render に **MySQL のマネージド DB は無く**、無料 Postgres は**作成30日で失効**する。ポートフォリオとして常時見せる以上、30日で消える DB は選べない。→ 外部の Neon（永続無料）＋ PostgreSQL に決定。
+
+移行コストを見積もったところ、**実質ゼロだった**:
+
+- マイグレーションは全て Laravel Blueprint の記述のみで、ドライバ依存が無い（`->after()` は Postgres では無視されるだけ）
+- **`ancestorPath()` の `WITH RECURSIVE` は標準 SQL** — Step4→5 で「MySQL 固有機能ではなく標準 SQL の範囲で書く」と決めていたのがそのまま効いた。**クエリを一行も変えずに** Postgres で動いた
+- `config/database.php` の `pgsql` が `DB_URL` を読むので、接続情報は**環境変数ひとつ**で足りる
+
+**副産物**: `messages.content` が MySQL TEXT の **65,535 バイト上限から解放**された（Postgres の TEXT は無制限）。Step5 で `ANTHROPIC_MAX_TOKENS` を上げられない制約として記録していた問題が、本番に関しては消えた。
+
+#### ④ 無料プランには shell が無い — デモアカウントをどう入れるか
+
+Render Shell は有料プラン限定。つまり**デプロイ後に `artisan db:seed` を手で叩けない**。イメージが `/etc/entrypoint.d/*` を起動時に実行する仕組みを使い、`SEED_DEMO_DATA=true` のときだけシードするスクリプトを置いた。
+
+これが成立するのは **`LearningTreeSeeder` が元から冪等**だから（`User::firstOrCreate` ＋ 既にプロジェクトを持っていれば早期 return）。コンテナは再起動のたびにこれを走らせるが、2回目以降は何も足さない。**Step6-2 でシーダーを「追加的」に書いておいた判断が、ここで別の形で回収された。**
+
+#### ⑤ `/` が本番で 500 になるところだった
+
+`routes/web.php` の `/` は Laravel 標準の `welcome` ビューを返していた。このビューは `@vite(['resources/css/app.css', 'resources/js/app.js'])` を含む。**この Laravel-Vite 雛形はこのプロダクトでは使っておらず**（画面は別サービスの `frontend/`）、本番イメージにも含めていないため、アクセスすると `ViteException` になる。`/` はサービス名を返すだけの JSON に置き換えた。
+
+#### ⑥ プロキシを信頼しないと Secure Cookie が落ちる
+
+Render はロードバランサで TLS を終端するので、**アプリからは常に平文 HTTP に見える**。`trustProxies` を入れないと `$request->secure()` が false になり、Laravel が Cookie の `Secure` 属性を落とし、URL も `http://` で生成する。`bootstrap/app.php` に `$middleware->trustProxies(at: '*')` を追加した。あわせて `SESSION_SECURE_COOKIE=true` も明示している。
+
+**検証（実機・課金ゼロ）**: Docker で Postgres 16 を立て、`migrate:fresh --seed` が通ることを確認。`ancestorPath()` が**深さ4の祖先パスをルート起点の正しい順序で**返し、`ContextBuilder` が 8 メッセージを組み立てることを tinker で確認。シーダーを2回追加実行して `(projects, nodes, messages) = (2, 7, 16)` が**変化しない**ことで冪等性を確認。次に本番と同じ Dockerfile をビルドして起動し、HTTP 経由で ①`/up` 200 ②`/` が JSON ③`/sanctum/csrf-cookie` 204 + `XSRF-TOKEN` 発行 ④`/api/login` 200（＝ CSRF とセッションが production 設定で成立）⑤`/api/me`・`/api/projects` が認証済みで応答 ⑥`/api/nodes/4/path` が再帰CTEの結果を返す ⑦**未認証の `/api/projects` が 401** を確認。`artisan test` 68件緑、`pint` 通過、`npm run build` 通過。
+
+**未検証（実デプロイでしか確認できない）**: Render の rewrite が POST ボディと `Set-Cookie` を素通しすること。デプロイ後に **Safari でログインできるか**が本命のチェックになる。
+
+### Step7 スライス3: AI 回答の Markdown 描画（吹き出しをやめて「読み物」にする）
+
+**採用**: `react-markdown` + `remark-gfm` + `rehype-highlight`。**AI 回答は吹き出しを外して全幅**、ユーザー発話は吹き出しのまま。生 HTML は無効のまま維持。
+
+#### ① 発覚した状態 — 「Markdown が読めない」だけではなかった
+
+`ChatPanel` は `{message.content}` を素のテキストとして吹き出しに入れていた。Claude は Markdown で返すので `##` や `**` が記号のまま出ていたが、それ以上に問題だったのは **`.bubble` に `white-space` 指定が無く改行そのものが潰れていた**こと。長い回答が一続きの塊になり、**「AI の回答を読んで、逸れたと感じたら枝を作る」という中核体験が成立していなかった**。Phase1 の価値に直接効く欠陥だったので、見た目の改善ではなく機能の修復として扱った。
+
+#### ② ライブラリ選定 — 自作パーサを捨てた理由
+
+- **`react-markdown`（9系）を採用**。見出し・太字・リスト程度なら自作でも書けるが、**表・ネスト・コードブロックで必ず破綻する**。学習アプリの回答に表とコードは日常的に出るので、ここは車輪の再発明にしかならない。
+- **`marked` + `DOMPurify` は却下**。HTML 文字列を作って `dangerouslySetInnerHTML` で挿す構成は、**サニタイズを正しく通す責任を自分で負う**ことになる。`react-markdown` は既定で生 HTML を無視する（`rehype-raw` を入れない限り DOM にならない）ので、**何もしないことが安全側**になる。これが決め手。
+- **`remark-gfm` は必須**。無しだと GFM の表がただの段落として落ちる。
+- **描画のカスタムは2点だけ**（`components`）。表を `.md-table-scroll` で包む（狭い中央カラムでのはみ出し対策）、`a` に `target="_blank" rel="noreferrer"`（**AI 出力に混ざる外部リンク**なので参照元を渡さない）。プラグイン配列は**モジュール定数**にしてある——render ごとに新しい配列を渡すとプラグイン鎖が作り直される。
+
+#### ③ 依存追加の責任 — ハイライトは Markdown 本体より重い
+
+実測（`npm run build`、gzip）:
+
+| | JS | gzip | 導入前比 |
+|---|---|---|---|
+| 6-4 時点 | 426 KB | 137 KB | — |
+| ＋ react-markdown / remark-gfm | 586 KB | 186 KB | +49 KB |
+| ＋ rehype-highlight / highlight.js | **764 KB** | **240 KB** | **+103 KB** |
+
+- **シンタックスハイライトの方が Markdown 本体より高い**（+54 KB gzip vs +49 KB）。理由は `lowlight` の `common` = 約37言語分の文法が入るため。
+- **⚠️ `rehype-highlight` の `languages` オプションでは減らせない**: `lib/index.js` が `import {common} from 'lowlight'` を**トップレベルで静的に** import しているため、自前の言語セットを渡しても `common` はバンドルに残る。**本当に削るならプラグインを使わず `createLowlight()` で自作する**しかない。今回は測ってから「この規模の個人開発では割に合わない」と判断して見送り、事実として記録する。
+- 直接依存は4つだが**実際は 98 → 201 パッケージ**（unified / remark / rehype / micromark 系）。`npm audit` は**導入前と同じ 2 high で新規ゼロ**。
+
+#### ④ CSS の落とし穴 — flex の自動最小サイズで「ページが横に伸びる」
+
+`overflow-x: auto` を付けただけではコードブロックは自分の中でスクロールしない。**flex item / grid track の自動最小サイズが content の min-content になる**ため、長いコード行がその外側を押し広げる。実測で犯人を切り分けた（`.markdown pre` を `display:none` にすると `documentElement.scrollWidth` が 1402 → 855）。3箇所の `min-width: 0` が必要だった:
+
+- **`.layout6 .center6`** — grid の `1fr` は `minmax(auto, 1fr)`。既にあった `min-height: 0`（縦スクロールのため）と**同じ理屈の横版**。これを入れるとページの横スクロール自体が消える（幅820pxで 1402 → 820）。
+- **`.msg`** — flex item なので、中の表やコードブロックの min-content まで広がる。
+- **`.markdown` ＋ `align-self: stretch`** — 枝ボタンを全幅に伸ばさないため `.msg.assistant` に `align-items: flex-start` を入れており、その結果**本文も shrink-to-fit になって `fit-content = max(min-content, ...)` で 769px に膨らんでいた**。本文だけ明示的に stretch させる。
+
+#### ⑤ highlight.js のテーマが二重のスクロールコンテナを作っていた
+
+配布テーマ（`atom-one-dark.css`）は `.hljs` 自身に `display: block; overflow-x: auto; padding; background` を載せてくる。つまり**`code` 要素がスクロールコンテナになり、自前の `pre` の枠と二重になる**（`pre.scrollWidth === clientWidth` なのに横に切れている、という一見矛盾した観測になった）。`.markdown pre code` で `background` / `padding` / `overflow-x` を戻し、**枠と背景は自前・トークンの色だけテーマに任せる**形に統一した。**言語指定のないコードブロックには `.hljs` が付かない**ので、揃えないと同じ画面で挙動が変わってしまう。
+
+#### ⑥ 描画するのはフロントだが、プロンプトも1行だけ足した
+
+`SYSTEM_PROMPT` に「Markdown で構造化してください」を追加。**「内容量に見合う範囲で」「短い答えを無理に飾る必要はありません」を明記**したのが要点で、これが無いと一行で済む質問にも見出しが付く。`NodeChatTest` は `AnthropicClient` をモックしているので、プロンプト変更で落ちるテストは無い（＝**この1行はテストに守られていない**ことも記録に留める）。
+
+#### ⑦ ユーザー発話は Markdown にしない
+
+自分が打った `*` は文字として出したい。改行だけ `white-space: pre-wrap` で残す。「考え中…」の吹き出しも assistant 側だが**文書ではなく一時的な状態表示**なので吹き出しのまま残し、本文と見分けが付くようにした。
+
+**検証（課金ゼロ・AI への実送信なし）**: `artisan test` **68件緑**、`pint` 通過、`npm run build` 通過。`tinker` で表・コード・引用・ネストリスト・長い識別子を含む発話を dev DB に1件入れて実機確認（確認後に削除済み）。①見出し・太字・リスト・表・引用・コードが体裁として出る／PHP がトークン単位で色付く ②AI 回答が全幅・ユーザー発話が右吹き出しで**3行が3行のまま**表示（`pre-wrap`、高さ87px）③**枝ボタンが全幅に伸びていない**（133px）④幅820pxまで縮めても**ページも `.messages` も横にはみ出さず**（overflow 0）、`pre` が自分の中でスクロールする（`scrollWidth` 753 vs `clientWidth` 185、`scrollLeft` が動く）／表も `.md-table-scroll` 内でスクロール ⑤枝作成→ツリー更新→パンくず3階層→新ノードへ移動が従来どおり ⑥`Invalid hook call` を含むコンソールエラーなし。
+
+**⚠️ 依存追加時の手順**（6-4 の教訓の再現防止）: dev サーバを止めてから `npm install` し、`node_modules/.vite` を消して起動した。起動中に足すと Vite の依存最適化が走り直して React が二重読み込みになる。
+
+**残した既知の癖**: GFM の autolink は、URL の直後に空白なしで全角文字が続くと**その全角文字までリンクに含める**（検証データで `...testing-wrap）でもペインは壊れません。` が href に入った）。remark-gfm の仕様の範囲で、実際の AI 出力ではまず起きないため触っていない。
 
 ### Step7 スライス2: バリデーションとエラーハンドリングの穴を塞ぐ
 

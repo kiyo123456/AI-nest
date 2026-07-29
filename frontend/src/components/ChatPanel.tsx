@@ -4,6 +4,7 @@ import { useMessages, useNodePath } from "../api/queries";
 import { isOptimistic, useCreateBranch, useSendChat } from "../api/mutations";
 import { useSelection } from "../selection/SelectionContext";
 import { nodeLabel } from "../tree";
+import { Markdown } from "./Markdown";
 
 /**
  * Turn a failed send into something worth reading.
@@ -106,11 +107,17 @@ export function ChatPanel({ showBreadcrumb = false }: { showBreadcrumb?: boolean
 
         {messages?.map((message) => (
           <div key={message.id} className={"msg " + message.role}>
-            <div
-              className={isOptimistic(message) ? "bubble pending" : "bubble"}
-            >
-              {message.content}
-            </div>
+            {/* The user's own text stays literal — their `*` is an asterisk.
+                The AI answers in Markdown, so it is rendered as a document. */}
+            {message.role === "user" ? (
+              <div
+                className={isOptimistic(message) ? "bubble pending" : "bubble"}
+              >
+                {message.content}
+              </div>
+            ) : (
+              <Markdown>{message.content}</Markdown>
+            )}
 
             {message.role === "assistant" && (
               <>

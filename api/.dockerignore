@@ -1,0 +1,36 @@
+# 秘密情報。本番の値は Render の env var から供給する。
+.env
+.env.*
+!.env.example
+auth.json
+
+# ビルド時に composer / イメージ側が用意するもの
+vendor
+node_modules
+public/build
+public/hot
+public/storage
+
+# 本番イメージに要らないもの
+.git
+.github
+.claude
+tests
+phpunit.xml
+storage/logs/*
+storage/framework/cache/data/*
+storage/framework/sessions/*
+storage/framework/views/*
+storage/pail
+
+# フロントは別サービス（frontend/）。api 側の Laravel-Vite 雛形は使わない。
+resources/js
+resources/css
+vite.config.js
+package.json
+package-lock.json
+
+.DS_Store
+*.log
+.phpunit.result.cache
+.phpunit.cache

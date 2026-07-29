@@ -1,0 +1,117 @@
+# Render Blueprint — API（Laravel / Docker）と SPA（Static Site）を1つで定義する。
+#
+# 構成のポイント:
+#   ブラウザは Static Site のドメインだけを見る。/api/* と /sanctum/* は Render の
+#   rewrite で API サービスへ転送するので、Sanctum のセッション Cookie が
+#   ファーストパーティのまま扱われる。フロントと API を別ドメインで直接叩くと
+#   Cookie がサードパーティ扱いになり、Safari 等ではログインできない。
+#
+# ⚠️ 初回デプロイ後にやること:
+#   API サービスの実 URL と Static Site の実 URL が確定したら、下の
+#   `<<API_URL>>` / `<<WEB_URL>>` を実際の URL に置き換えて push し直す。
+#   （rewrite の destination には Render の「外部 URL」が必要。内部ドメインは 502 になる）
+
+services:
+  # ---------------------------------------------------------------- API ------
+  - type: web
+    name: ai-nest-api
+    runtime: docker
+    plan: free
+    region: singapore
+    branch: main
+    rootDir: api
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /up # bootstrap/app.php の health ルート
+    envVars:
+      # イメージの nginx は 8080 待ち受け。Render のデフォルト（10000）ではない。
+      - key: PORT
+        value: "8080"
+
+      - key: APP_NAME
+        value: 思考の樹形図
+      - key: APP_ENV
+        value: production
+      - key: APP_DEBUG
+        value: "false"
+      - key: APP_KEY
+        sync: false # ダッシュボードで手入力（`php artisan key:generate --show`）
+      - key: APP_URL
+        fromService: { type: web, name: ai-nest-web, property: hostport }
+      - key: APP_LOCALE
+        value: ja
+      - key: APP_FALLBACK_LOCALE
+        value: en
+
+      # Render のログストリームに流す
+      - key: LOG_CHANNEL
+        value: stderr
+      - key: LOG_LEVEL
+        value: warning
+
+      # DB は外部の Neon PostgreSQL。Render の無料 Postgres は作成30日で失効するため使わない。
+      - key: DB_CONNECTION
+        value: pgsql
+      - key: DB_URL
+        sync: false # postgresql://...?sslmode=require
+
+      # セッション / キャッシュは DB に置く（Redis 不要）
+      - key: SESSION_DRIVER
+        value: database
+      - key: CACHE_STORE
+        value: database
+      # HTTPS 終端は Render のロードバランサ。Laravel は自力で検知できないので明示する。
+      - key: SESSION_SECURE_COOKIE
+        value: "true"
+      # rewrite 経由でブラウザからは同一オリジンに見えるので lax で足りる
+      - key: SESSION_SAME_SITE
+        value: lax
+
+      # キューは未使用（チャットは同期呼び出し）。ワーカープロセスは要らない。
+      - key: QUEUE_CONNECTION
+        value: sync
+
+      # Sanctum / CORS。Referer・Origin は Static Site のホストになる。
+      - key: SANCTUM_STATEFUL_DOMAINS
+        fromService: { type: web, name: ai-nest-web, property: host }
+      - key: FRONTEND_URL
+        fromService: { type: web, name: ai-nest-web, property: hostport }
+
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: ANTHROPIC_MODEL
+        value: claude-opus-5
+      - key: ANTHROPIC_MAX_TOKENS
+        value: "4096"
+      - key: ANTHROPIC_RATE_LIMIT_PER_MINUTE
+        value: "1"
+      - key: ANTHROPIC_RATE_LIMIT_PER_DAY
+        value: "50"
+
+      # 起動時に demo@example.com を投入する（docker/entrypoint.d/50-seed-demo.sh）
+      - key: SEED_DEMO_DATA
+        value: "true"
+
+  # -------------------------------------------------------------- フロント ----
+  - type: web
+    name: ai-nest-web
+    runtime: static
+    branch: main
+    rootDir: frontend
+    buildCommand: npm ci && npm run build
+    staticPublishPath: ./dist
+    envVars:
+      # 自分自身のオリジン。下の rewrite で同一オリジンのまま API に届く。
+      - key: VITE_API_URL
+        value: <<WEB_URL>>
+    routes:
+      # 順序が重要。API を先に、SPA フォールバックを最後に置く。
+      - type: rewrite
+        source: /api/*
+        destination: <<API_URL>>/api/*
+      - type: rewrite
+        source: /sanctum/*
+        destination: <<API_URL>>/sanctum/*
+      # react-router 用。深いパスの直リロードを index.html に寄せる。
+      - type: rewrite
+        source: /*
+        destination: /index.html

@@ -108,8 +108,8 @@ composer install
 ```bash
 # 2) フロントエンド（別ターミナル）
 cd frontend
-npm install
-npm run dev                                          # → http://localhost:5173
+pnpm install
+pnpm dev                                          # → http://localhost:5173
 ```
 
 デモアカウント: `demo@example.com` / `password`

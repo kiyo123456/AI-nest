@@ -103,7 +103,8 @@ services:
     runtime: static
     branch: main
     rootDir: frontend
-    buildCommand: npm ci && npm run build
+    # pnpm の版は frontend/package.json の packageManager で決まる。Corepack がその版を用意する。
+    buildCommand: npm install -g corepack && corepack enable && pnpm install --frozen-lockfile && pnpm build
     staticPublishPath: ./dist
     envVars:
       # 自分自身のオリジン。下の rewrite で同一オリジンのまま API に届く。

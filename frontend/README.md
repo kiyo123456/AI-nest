@@ -12,11 +12,11 @@ cd ../api
 /opt/homebrew/opt/php@8.4/bin/php artisan serve   # → http://localhost:8000
 
 # 2) フロント
-npm install
-npm run dev                                        # → http://localhost:5173
+pnpm install
+pnpm dev                                        # → http://localhost:5173
 ```
 
-`npm run build` で型チェック（`tsc -b`）＋本番ビルド。
+`pnpm build` で型チェック（`tsc -b`）＋本番ビルド。
 
 ## 設定
 
